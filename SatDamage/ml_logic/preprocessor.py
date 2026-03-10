@@ -142,8 +142,8 @@ def preprocess(data_dir):
         - y (numpy.ndarray): Array of shape (n_samples,) containing the labels.
         - Z (numpy.ndarray): Array of shape (n_samples, 2) containing additional metadata : file name and building's id.
     """
-    image_dir = data_dir + "/images"
-    label_dir = data_dir + "/labels"
+    image_dir = data_dir + "images/"
+    label_dir = data_dir + "labels/"
 
     image_pfx = ""
 
@@ -176,7 +176,7 @@ def preprocess(data_dir):
                 print("Fichier label post-disaster manquant")
                 continue
             # Calling preprocessing of sample
-            new_X, new_y, new_Z = preprocess_sample(image_pfx)
+            new_X, new_y, new_Z = preprocess_sample(image_pfx, data_dir)
             X = np.concatenate((X, new_X), axis=0)
             y = np.concatenate((y, new_y))
             Z = np.concatenate((Z, new_Z), axis=0)
