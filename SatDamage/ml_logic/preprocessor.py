@@ -122,3 +122,63 @@ def preprocess_sample(sample, data_path):
     all_cropped = [ np.concatenate( [pre_cropped[i],post_cropped[i]], axis= 2) for i in pre_cropped ]
     X = np.stack(all_cropped, axis=0)
     return X, labels, annot
+
+def preprocess(data_dir):
+    """
+    Preprocesses satellite damage data from the given directory.
+
+    This function loads pre-disaster and post-disaster satellite images along with their
+    corresponding labels from the specified data directory. It processes each sample
+    by checking for the presence of required files and concatenating the processed data
+    into arrays.
+
+    Parameters:
+    data_dir (str): Path to the data directory containing 'images' and 'labels' subdirectories.
+                   The 'images' directory should contain .tif files, and 'labels' should contain .json files.
+
+    Returns:
+    tuple: A tuple containing three numpy arrays:
+        - X (numpy.ndarray): Array of shape (n_samples, 128, 128, 6) containing the processed image data.
+        - y (numpy.ndarray): Array of shape (n_samples,) containing the labels.
+        - Z (numpy.ndarray): Array of shape (n_samples, 2) containing additional metadata : file name and building's id.
+    """
+    image_dir = data_dir + "images/"
+    label_dir = data_dir + "labels/"
+
+    image_pfx = ""
+
+    # Listing directory content
+    image_list = os.listdir(image_dir)
+    label_list = os.listdir(label_dir)
+
+    X = np.empty((0, 128, 128, 6))
+    # print("X", X.shape)
+    y = np.empty(0)
+    # print("y", y.shape)
+    Z = np.empty((0, 2))
+    # print("Z", Z.shape)
+
+    # Looping over files
+    for image in image_list:
+        # Checking presence of 4 files with same prefix
+        if image.endswith("_post_disaster.tif"):
+            image_pfx = image.replace("_post_disaster.tif", "")
+            image_pre = image_pfx + "_pre_disaster.tif"
+            label_post = image_pfx + "_post_disaster.json"
+            label_pre = image_pfx + "_pre_disaster.json"
+            if image_pre not in image_list:
+                print("Fichier image pre-disaster manquant")
+                continue
+            if label_post not in label_list:
+                print("Fichier label post-disaster manquant")
+                continue
+            if label_pre not in label_list:
+                print("Fichier label post-disaster manquant")
+                continue
+            # Calling preprocessing of sample
+            new_X, new_y, new_Z = preprocess_sample(image_pfx, data_dir)
+            X = np.concatenate((X, new_X), axis=0)
+            y = np.concatenate((y, new_y))
+            Z = np.concatenate((Z, new_Z), axis=0)
+
+    return X, y, Z
