@@ -5,9 +5,40 @@ import rasterio
 from shapely import wkt
 from PIL import Image
 
+"""
+This module provides preprocessing utilities for satellite imagery data used in damage assessment.
+It includes functions to crop buildings from TIFF images based on polygon geometries and to
+preprocess samples by combining pre- and post-disaster images with labels.
+"""
+
 
 def crop_buildings(tif_path, json_path, padding=10, target_size=128):
-    """Crop buildings from a TIFF using its polygon geometry."""
+    """
+    Crop buildings from a TIFF image using polygon geometries from a JSON file.
+
+    This function reads a TIFF image and a corresponding JSON file containing building
+    geometries in WKT format. It crops each building with optional padding, scales the
+    pixel values, and resizes the crops to a target size.
+
+    Parameters
+    ----------
+    tif_path : str
+        Path to the TIFF image file.
+    json_path : str
+        Path to the JSON file containing building geometries.
+    padding : int, optional
+        Number of pixels to add as padding around each building's bounding box.
+        Default is 10.
+    target_size : int, optional
+        Size to resize each cropped image to (target_size x target_size).
+        Default is 128.
+
+    Returns
+    -------
+    dict
+        A dictionary where keys are building UIDs and values are numpy arrays
+        representing the cropped and processed images (RGB, float32, 0-1 range).
+    """
     with rasterio.open(tif_path) as src:
         img = src.read()  # (bands, H, W)
         H, W = src.height, src.width
@@ -51,6 +82,30 @@ def crop_buildings(tif_path, json_path, padding=10, target_size=128):
 
 
 def preprocess_sample(sample, data_path):
+    """
+    Preprocess a sample by cropping buildings from pre- and post-disaster images and preparing labels and annotations.
+
+    This function processes a given sample by loading pre- and post-disaster TIFF images
+    and their corresponding JSON label files. It crops buildings from both images,
+    concatenates them, and extracts labels and annotations for damage assessment.
+
+    Parameters
+    ----------
+    sample : str
+        The identifier for the sample (e.g., 'hurricane-florence_00000027').
+    data_path : str
+        Path to the directory containing 'images/' and 'labels/' subdirectories.
+
+    Returns
+    -------
+    X : numpy.ndarray
+        A 4D array of shape (n_buildings, target_size, target_size, 6) where the last
+        dimension concatenates RGB channels from pre- and post-disaster images.
+    labels : numpy.ndarray
+        A 1D array of damage subtypes for each building.
+    annot : numpy.ndarray
+        A 2D array of shape (n_buildings, 2) containing building UIDs and sample names.
+    """
     tif_path_pre = data_path + "images/" + sample + "_pre_disaster.tif"
     tif_path_post = data_path + "images/" + sample + "_post_disaster.tif"
     json_path_pre = data_path + "labels/" + sample + "_pre_disaster.json"
