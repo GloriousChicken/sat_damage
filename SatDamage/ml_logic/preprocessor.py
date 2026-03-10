@@ -63,7 +63,7 @@ def preprocess_sample(sample, data_path):
     annot = np.stack([ids, [sample] * len(ids)], axis=1)
 
     pre_cropped = crop_buildings(tif_path_pre, json_path_pre)
-    post_cropped = crop_buildings(tif_path_ost, json_path_pre)
+    post_cropped = crop_buildings(tif_path_post, json_path_post)
     all_cropped = [ np.concatenate( [pre_cropped[i],post_cropped[i]], axis= 2) for i in pre_cropped ]
     X = np.stack(all_cropped, axis=0)
     return X, labels, annot
