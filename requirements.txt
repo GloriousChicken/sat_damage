@@ -1,0 +1,3 @@
+tensorflow==2.21.0
+rasterio==1.5.0
+shapely==2.1.2
