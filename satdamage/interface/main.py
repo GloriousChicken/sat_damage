@@ -2,10 +2,10 @@ import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
 from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, pairs_split, build_all_samples
 from satdamage.ml_logic.model import train, evaluate
-
+from satdamage.params import DATA_DIR
 
 # ─────────────────────────────────────────────
-# 5. GESTION DU DÉSÉQUILIBRE DE CLASSES
+# 1. GESTION DU DÉSÉQUILIBRE DE CLASSES
 # ─────────────────────────────────────────────
 
 def compute_class_weights(labels):
@@ -23,7 +23,7 @@ def compute_class_weights(labels):
 
 
 # ─────────────────────────────────────────────
-# 8. PIPELINE COMPLET
+# 2. PIPELINE COMPLET
 # ─────────────────────────────────────────────
 
 def build_xview2_datasets(xview2_root: str):
@@ -98,14 +98,14 @@ def build_xview2_datasets(xview2_root: str):
 
 
 # ─────────────────────────────────────────────
-# 10. POINT D'ENTRÉE
+# 3. POINT D'ENTRÉE
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
 
     # ── Pipeline automatique complet
     train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
-        xview2_root="data/balanced_samples"
+        xview2_root=DATA_DIR
     )
 
     # ── Lancement de l'entraînement

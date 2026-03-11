@@ -11,37 +11,10 @@ import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
-
-
-# ─────────────────────────────────────────────
-# 1. CONFIGURATION
-# ─────────────────────────────────────────────
-
-class Config:
-    # Données
-    IMAGE_SIZE     = (128, 128)        # Taille de resize des crops bâtiments
-    INPUT_CHANNELS = 6                 # 3 (pré) + 3 (post)
-    NUM_CLASSES    = 1                 # Binaire → sigmoid
-    BATCH_SIZE     = 32
-    EPOCHS         = 50
-
-    # Chemins xView2
-    TRAIN_DIR = "data/train"
-    VAL_DIR   = "data/val"
-    TEST_DIR  = "data/test"
-
-    # Entraînement
-    LEARNING_RATE  = 1e-3
-    WEIGHT_DECAY   = 1e-4
-    DROPOUT_RATE   = 0.5
-
-    # Sauvegarde
-    CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
-    LOG_DIR         = "logs/cnn_damage"
-
+from satdamage.params import *
 
 # ─────────────────────────────────────────────
-# 2. BLOC CONVOLUTIONNEL DE BASE
+# 1. BLOC CONVOLUTIONNEL DE BASE
 # ─────────────────────────────────────────────
 
 def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
@@ -53,7 +26,7 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
         filters,
         kernel_size,
         padding="same",
-        kernel_regularizer=regularizers.l2(Config.WEIGHT_DECAY),
+        kernel_regularizer=regularizers.l2(WEIGHT_DECAY),
         name=f"{name}_conv" if name else None
     )(x)
     if use_bn:
@@ -65,7 +38,7 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
 
 
 # ─────────────────────────────────────────────
-# 3. ARCHITECTURE CNN PRINCIPALE
+# 2. ARCHITECTURE CNN PRINCIPALE
 # ─────────────────────────────────────────────
 
 def build_damage_cnn(input_shape=(128, 128, 6)):
@@ -119,12 +92,12 @@ def build_damage_cnn(input_shape=(128, 128, 6)):
     # Sortie : vecteur 256-dim (remplace Flatten → moins de params, moins d'overfit)
 
     # ── Head de classification
-    x = layers.Dense(256, kernel_regularizer=regularizers.l2(Config.WEIGHT_DECAY), name="fc1")(x)
+    x = layers.Dense(256, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc1")(x)
     x = layers.BatchNormalization(name="fc1_bn")(x)
     x = layers.ReLU(name="fc1_relu")(x)
-    x = layers.Dropout(Config.DROPOUT_RATE, name="fc1_drop")(x)
+    x = layers.Dropout(DROPOUT_RATE, name="fc1_drop")(x)
 
-    x = layers.Dense(128, kernel_regularizer=regularizers.l2(Config.WEIGHT_DECAY), name="fc2")(x)
+    x = layers.Dense(128, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc2")(x)
     x = layers.BatchNormalization(name="fc2_bn")(x)
     x = layers.ReLU(name="fc2_relu")(x)
     x = layers.Dropout(0.3, name="fc2_drop")(x)
@@ -138,13 +111,13 @@ def build_damage_cnn(input_shape=(128, 128, 6)):
 
 
 # ─────────────────────────────────────────────
-# 6. COMPILATION & CALLBACKS
+# 3. COMPILATION & CALLBACKS
 # ─────────────────────────────────────────────
 
 def compile_model(model):
     model.compile(
         optimizer=tf.keras.optimizers.Adam(
-            learning_rate=Config.LEARNING_RATE
+            learning_rate=LEARNING_RATE
         ),
         loss=tf.keras.losses.BinaryCrossentropy(),
         metrics=[
@@ -158,8 +131,8 @@ def compile_model(model):
 
 
 def get_callbacks():
-    os.makedirs(os.path.dirname(Config.CHECKPOINT_PATH), exist_ok=True)
-    os.makedirs(Config.LOG_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
     return [
         # Arrêt si pas d'amélioration sur la val_loss
@@ -180,7 +153,7 @@ def get_callbacks():
         ),
         # Sauvegarde du meilleur modèle
         ModelCheckpoint(
-            filepath=Config.CHECKPOINT_PATH,
+            filepath=CHECKPOINT_PATH,
             monitor="val_auc",
             save_best_only=True,
             mode="max",
@@ -188,7 +161,7 @@ def get_callbacks():
         ),
         # TensorBoard
         TensorBoard(
-            log_dir=Config.LOG_DIR,
+            log_dir=LOG_DIR,
             histogram_freq=1
         ),
     ]
@@ -196,7 +169,7 @@ def get_callbacks():
 
 
 # ─────────────────────────────────────────────
-# 7. ENTRAÎNEMENT
+# 4. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
 def train(train_ds, val_ds, class_weights=None):
@@ -207,7 +180,7 @@ def train(train_ds, val_ds, class_weights=None):
     history = model.fit(
         train_ds,
         validation_data=val_ds,
-        epochs=Config.EPOCHS,
+        epochs=EPOCHS,
         class_weight=class_weights,
         callbacks=get_callbacks(),
         verbose=1
@@ -216,7 +189,7 @@ def train(train_ds, val_ds, class_weights=None):
 
 
 # ─────────────────────────────────────────────
-# 8. ÉVALUATION
+# 5. ÉVALUATION
 # ─────────────────────────────────────────────
 
 def evaluate(model, test_ds, threshold=0.5):
