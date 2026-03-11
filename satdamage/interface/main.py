@@ -5,7 +5,7 @@ from satdamage.ml_logic.model import train, evaluate
 
 
 # ─────────────────────────────────────────────
-# 5. GESTION DU DÉSÉQUILIBRE DE CLASSES
+# 1. GESTION DU DÉSÉQUILIBRE DE CLASSES
 # ─────────────────────────────────────────────
 
 def compute_class_weights(labels):
@@ -23,7 +23,7 @@ def compute_class_weights(labels):
 
 
 # ─────────────────────────────────────────────
-# 8. PIPELINE COMPLET
+# 2. PIPELINE COMPLET
 # ─────────────────────────────────────────────
 
 def build_xview2_datasets(xview2_root: str):
@@ -98,7 +98,7 @@ def build_xview2_datasets(xview2_root: str):
 
 
 # ─────────────────────────────────────────────
-# 10. POINT D'ENTRÉE
+# 3. POINT D'ENTRÉE
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":

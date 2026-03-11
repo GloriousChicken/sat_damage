@@ -1,11 +1,10 @@
-
-
 import os
 import json
 import random
 import numpy as np
 import tensorflow as tf
 import rasterio
+from satdamage.params import *
 from pathlib import Path
 from PIL import Image
 from shapely.geometry import shape
@@ -66,6 +65,7 @@ def load_json_buildings(json_path: str) -> List[Dict]:
     return buildings
 
 
+
 # ─────────────────────────────────────────────
 # 2. EXTRACTION DES CROPS DE BÂTIMENTS
 # ─────────────────────────────────────────────
@@ -124,6 +124,7 @@ def crop_building(
     return np.array(pil_crop)
 
 
+
 # ─────────────────────────────────────────────
 # 3. TRAITEMENT D'UNE PAIRE D'IMAGES
 # ─────────────────────────────────────────────
@@ -167,55 +168,59 @@ def process_image_pair(
     return samples
 
 
+
 # ─────────────────────────────────────────────
 # 4. SCAN DES PAIRES D'IMAGES xView2
 # ─────────────────────────────────────────────
 
 def find_image_pairs(
-    xview2_root:   str
+    xview2_root:   str,
+    source_splits: List[str] = SOURCE_SPLITS
 ) -> List[Dict[str, str]]:
 
     pairs = []
     root  = Path(xview2_root)
 
-    img_dir   = root / "images"
-    label_dir = root / "labels"
+    for split in source_splits:
+        img_dir   = root / split / "images"
+        label_dir = root / split / "labels"
 
-    if not img_dir.exists():
-        print(f"[WARN] Dossier introuvable : {img_dir}")
-        return pairs
+        if not img_dir.exists():
+            print(f"[WARN] Dossier introuvable : {img_dir}")
+            return pairs
 
-    # Chercher les fichiers post_disaster en PNG ou TIFF
-    post_images = sorted(
-        list(img_dir.glob("*_post_disaster.png")) +
-        list(img_dir.glob("*_post_disaster.tif")) +
-        list(img_dir.glob("*_post_disaster.tiff"))
-    )
+        # Chercher les fichiers post_disaster en PNG ou TIFF
+        post_images = sorted(
+            list(img_dir.glob("*_post_disaster.png")) +
+            list(img_dir.glob("*_post_disaster.tif")) +
+            list(img_dir.glob("*_post_disaster.tiff"))
+        )
 
-    for post_img_path in post_images:
-        stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
-        ext  = post_img_path.suffix # ex: .png ou .tif ou .tiff
+        for post_img_path in post_images:
+            stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
+            ext  = post_img_path.suffix # ex: .png ou .tif ou .tiff
 
-        pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
-        pre_img_path    = img_dir   / f"{pre_stem}{ext}"
-        post_label_path = label_dir / f"{stem}.json"
+            pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
+            pre_img_path    = img_dir   / f"{pre_stem}{ext}"
+            post_label_path = label_dir / f"{stem}.json"
 
-        if not pre_img_path.exists() or not post_label_path.exists():
-            continue
+            if not pre_img_path.exists() or not post_label_path.exists():
+                continue
 
-        # Nom de l'événement : tout sauf les deux derniers segments
-        # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
-        event = "_".join(stem.split("_")[:-2])
+            # Nom de l'événement : tout sauf les deux derniers segments
+            # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
+            event = "_".join(stem.split("_")[:-2])
 
-        pairs.append({
-            "pre_img":    str(pre_img_path),
-            "post_img":   str(post_img_path),
-            "post_label": str(post_label_path),
-            "event":      event,
-        })
+            pairs.append({
+                "pre_img":    str(pre_img_path),
+                "post_img":   str(post_img_path),
+                "post_label": str(post_label_path),
+                "event":      event,
+            })
 
     print(f"[INFO] {len(pairs)} paires d'images trouvées ")
     return pairs
+
 
 
 # ─────────────────────────────────────────────
