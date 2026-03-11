@@ -12,7 +12,6 @@ from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
 from collections import Counter, defaultdict
 from typing import List, Tuple, Dict, Optional
-from satdamage.ml_logic.model import Config
 
 
 """
@@ -174,49 +173,47 @@ def process_image_pair(
 # ─────────────────────────────────────────────
 
 def find_image_pairs(
-    xview2_root:   str,
-    source_splits: List[str] = SOURCE_SPLITS
+    xview2_root:   str
 ) -> List[Dict[str, str]]:
 
     pairs = []
     root  = Path(xview2_root)
 
-    for split in source_splits:
-        img_dir   = root / split / "images"
-        label_dir = root / split / "labels"
+    img_dir   = root / "images"
+    label_dir = root / "labels"
 
-        if not img_dir.exists():
-            print(f"[WARN] Dossier introuvable : {img_dir}")
-            return pairs
+    if not img_dir.exists():
+        print(f"[WARN] Dossier introuvable : {img_dir}")
+        return pairs
 
-        # Chercher les fichiers post_disaster en PNG ou TIFF
-        post_images = sorted(
-            list(img_dir.glob("*_post_disaster.png")) +
-            list(img_dir.glob("*_post_disaster.tif")) +
-            list(img_dir.glob("*_post_disaster.tiff"))
-        )
+    # Chercher les fichiers post_disaster en PNG ou TIFF
+    post_images = sorted(
+        list(img_dir.glob("*_post_disaster.png")) +
+        list(img_dir.glob("*_post_disaster.tif")) +
+        list(img_dir.glob("*_post_disaster.tiff"))
+    )
 
-        for post_img_path in post_images:
-            stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
-            ext  = post_img_path.suffix # ex: .png ou .tif ou .tiff
+    for post_img_path in post_images:
+        stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
+        ext  = post_img_path.suffix # ex: .png ou .tif ou .tiff
 
-            pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
-            pre_img_path    = img_dir   / f"{pre_stem}{ext}"
-            post_label_path = label_dir / f"{stem}.json"
+        pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
+        pre_img_path    = img_dir   / f"{pre_stem}{ext}"
+        post_label_path = label_dir / f"{stem}.json"
 
-            if not pre_img_path.exists() or not post_label_path.exists():
-                continue
+        if not pre_img_path.exists() or not post_label_path.exists():
+            continue
 
-            # Nom de l'événement : tout sauf les deux derniers segments
-            # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
-            event = "_".join(stem.split("_")[:-2])
+        # Nom de l'événement : tout sauf les deux derniers segments
+        # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
+        event = "_".join(stem.split("_")[:-2])
 
-            pairs.append({
-                "pre_img":    str(pre_img_path),
-                "post_img":   str(post_img_path),
-                "post_label": str(post_label_path),
-                "event":      event,
-            })
+        pairs.append({
+            "pre_img":    str(pre_img_path),
+            "post_img":   str(post_img_path),
+            "post_label": str(post_label_path),
+            "event":      event,
+        })
 
     print(f"[INFO] {len(pairs)} paires d'images trouvées ")
     return pairs
@@ -237,7 +234,7 @@ def build_all_samples(
     errors = 0
 
     for i, pair in enumerate(pairs):
-        if verbose and i % 100 == 0:
+        if verbose and (i+1) % 10 == 0:
             print(f"Processing {i+1}/{len(pairs)}: {pair['event']}")
         try:
             samples = process_image_pair(
@@ -292,8 +289,8 @@ def preprocess_pair(pre_image, post_image, label):
     """Concatenates and normalizes pre/post images."""
     pre = tf.cast(pre_image, tf.float32) / 255.0
     post = tf.cast(post_image, tf.float32) / 255.0
-    pre = tf.image.resize(pre, Config.IMAGE_SIZE)
-    post = tf.image.resize(post, Config.IMAGE_SIZE)
+    pre = tf.image.resize(pre, CROP_SIZE)
+    post = tf.image.resize(post, CROP_SIZE)
     combined = tf.concat([pre, post], axis=-1)
     return combined, label
 
