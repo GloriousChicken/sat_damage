@@ -34,6 +34,9 @@ DROPOUT_RATE  = 0.5
 CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
 LOG_DIR         = "logs/cnn_damage"
 
+####################  LOCAL PATH  ############
+DATA_DIR = os.environ.get("DATA_DIR")
+
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
 GCP_PROJECT = os.environ.get("GCP_PROJECT")
