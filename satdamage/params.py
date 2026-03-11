@@ -3,19 +3,30 @@ import os
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
-CROP_SIZE = (128, 128)
-CROP_PADDING = 10
-DAMAGE_TO_BINARY = {
-    "no-damage": 0,
-    "minor-damage": 1,
-    "major-damage": 1,
-    "destroyed": 1,
-    "un-classified": None,
-}
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
-RANDOM_SEED = 42
+CROP_SIZE        = os.environ.get("CROP_SIZE")
+CROP_PADDING     = os.environ.get("CROP_PADDING")
+DAMAGE_TO_BINARY = os.environ.get("DAMAGE_TO_BINARY")
+TRAIN_RATIO      = os.environ.get("TRAIN_RATIO")
+VAL_RATIO        = os.environ.get("VAL_RATIO")
+TEST_RATIO       = os.environ.get("TEST_RATIO")
+RANDOM_SEED      = os.environ.get("RANDOM_SEED")
+BATCH_SIZE       = os.environ.get("BATCH_SIZE")
+EPOCHS           = os.environ.get("EPOCHS")
+SOURCE_SPLITS    = os.environ.get("SOURCE_SPLITS")
+
+# Chemins xView2
+TRAIN_DIR = os.environ.get("TRAIN_DIR")
+VAL_DIR   = os.environ.get("VAL_DIR")
+TEST_DIR  = os.environ.get("TEST_DIR")
+
+# Entraînement
+LEARNING_RATE  = os.environ.get("LEARNING_RATE")
+WEIGHT_DECAY   = os.environ.get("WEIGHT_DECAY")
+DROPOUT_RATE   = os.environ.get("DROPOUT_RATE")
+
+# Sauvegarde
+CHECKPOINT_PATH = os.environ.get("CHECKPOINT_PATH")
+LOG_DIR         = os.environ.get("LOG_DIR")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
