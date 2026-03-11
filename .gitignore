@@ -3,6 +3,10 @@ make_repo_structure.sh
 doc/
 data/
 .vscode/
+*_dev.py
+*_old.py
+checkpoints/*
+logs/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
