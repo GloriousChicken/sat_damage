@@ -2,181 +2,122 @@ import os
 import json
 import numpy as np
 import rasterio
-import rasterio.windows
 from shapely import wkt
 from PIL import Image
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
-"""
-This module provides preprocessing utilities for satellite imagery data used in damage assessment.
-It includes functions to crop buildings from TIFF images based on polygon geometries and to
-preprocess samples by combining pre- and post-disaster images with labels.
-"""
-
-
-def crop_buildings(tif_path, json_path, padding=10, target_size=128):
+def crop_buildings(img_path, json_path, padding=10, target_size=128):
     """
-    Crop buildings from a TIFF image using polygon geometries from a JSON file.
-
-    This function reads a TIFF image and a corresponding JSON file containing building
-    geometries in WKT format. It crops each building with optional padding, scales the
-    pixel values, and resizes the crops to a target size.
-
-    Parameters
-    ----------
-    tif_path : str
-        Path to the TIFF image file.
-    json_path : str
-        Path to the JSON file containing building geometries.
-    padding : int, optional
-        Number of pixels to add as padding around each building's bounding box.
-        Default is 10.
-    target_size : int, optional
-        Size to resize each cropped image to (target_size x target_size).
-        Default is 128.
-
-    Returns
-    -------
-    dict
-        A dictionary where keys are building UIDs and values are numpy arrays
-        representing the cropped and processed images (RGB, float32, 0-1 range).
+    Handles both .tif (via rasterio) and .png (via PIL).
     """
-    with rasterio.open(tif_path) as src:
-        img = src.read()  # (bands, H, W)
-        H, W = src.height, src.width
+    # --- 1. Load Image Based on Extension ---
+    if img_path.endswith('.png'):
+        # PNG (8-bit) - standard loading
+        with Image.open(img_path) as pil_img:
+            img_np = np.array(pil_img.convert("RGB")) # (H, W, 3)
+        H, W, _ = img_np.shape
+        # Re-order to (3, H, W) to stay compatible with the rest of the script
+        img = img_np.transpose(2, 0, 1)
+        is_tif = False
+    else:
+        # TIFF (16-bit) - professional satellite loading
+        with rasterio.open(img_path) as src:
+            img = src.read()  # (bands, H, W)
+            H, W = src.height, src.width
+        is_tif = True
 
     with open(json_path) as f:
         data = json.load(f)
 
-    features = [f for f in data['features']['xy'] ]
+    features = [f for f in data['features']['xy']]
     output = {}
 
     for f in features:
-        geometry = f['wkt']
-        geom = wkt.loads(geometry)
+        geom = wkt.loads(f['wkt'])
         minx, miny, maxx, maxy = geom.bounds
 
-        # Add padding and clip to image bounds
-        x1 = max(0, int(minx) - padding)
-        y1 = max(0, int(miny) - padding)
-        x2 = min(W, int(maxx) + padding)
-        y2 = min(H, int(maxy) + padding)
+        x1, y1 = max(0, int(minx) - padding), max(0, int(miny) - padding)
+        x2, y2 = min(W, int(maxx) + padding), min(H, int(maxy) + padding)
 
         crop = img[:, y1:y2, x1:x2]
 
-        # Scale each band
-        def scale_band(band):
-            p2, p98 = np.percentile(band, 2), np.percentile(band, 98)
-            if p98 == p2:
-                return np.zeros_like(band, dtype=np.float32)
-            return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
+        if is_tif:
+            # Special scaling for 16-bit TIFF
+            def scale_band(band):
+                p2, p98 = np.percentile(band, 2), np.percentile(band, 98)
+                if p98 == p2: return np.zeros_like(band, dtype=np.float32)
+                return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
+            rgb = np.stack([scale_band(crop[0]), scale_band(crop[1]), scale_band(crop[2])], axis=-1)
+        else:
+            # Simple scaling for 8-bit PNG
+            rgb = crop.transpose(1, 2, 0).astype(np.float32) / 255.0
 
-        rgb = np.stack([scale_band(crop[0]), scale_band(crop[1]), scale_band(crop[2])], axis=-1)  # (H_crop, W_crop, 3)
-
-        # Resize to target_size x target_size
+        # Resize
         pil = Image.fromarray((rgb * 255).astype(np.uint8))
         pil = pil.resize((target_size, target_size), Image.Resampling.LANCZOS)
-
-        # Add to output dict
         output[f['properties']['uid']] = np.array(pil)
 
     return output
 
 
 def preprocess_sample(sample, data_path):
-    """
-    Preprocess a sample by cropping buildings from pre- and post-disaster images and preparing labels and annotations.
-
-    This function processes a given sample by loading pre- and post-disaster TIFF images
-    and their corresponding JSON label files. It crops buildings from both images,
-    concatenates them, and extracts labels and annotations for damage assessment.
-
-    Parameters
-    ----------
-    sample : str
-        The identifier for the sample (e.g., 'hurricane-florence_00000027').
-    data_path : str
-        Path to the directory containing 'images/' and 'labels/' subdirectories.
-
-    Returns
-    -------
-    X : numpy.ndarray
-        A 4D array of shape (n_buildings, target_size, target_size, 6) where the last
-        dimension concatenates RGB channels from pre- and post-disaster images.
-    labels : numpy.ndarray
-        A 1D array of damage subtypes for each building.
-    annot : numpy.ndarray
-        A 2D array of shape (n_buildings, 2) containing building UIDs and sample names.
-    """
-    tif_path_pre = data_path + "images/" + sample + "_pre_disaster.tif"
-    tif_path_post = data_path + "images/" + sample + "_post_disaster.tif"
-    json_path_pre = data_path + "labels/" + sample + "_pre_disaster.json"
-    json_path_post = data_path + "labels/" + sample + "_post_disaster.json"
+    # Detect extension
+    extension = ".png" if os.path.exists(os.path.join(data_path, "images", f"{sample}_pre_disaster.png")) else ".tif"
+    
+    img_path_pre = os.path.join(data_path, "images", f"{sample}_pre_disaster{extension}")
+    img_path_post = os.path.join(data_path, "images", f"{sample}_post_disaster{extension}")
+    json_path_pre = os.path.join(data_path, "labels", f"{sample}_pre_disaster.json")
+    json_path_post = os.path.join(data_path, "labels", f"{sample}_post_disaster.json")
 
     with open(json_path_post) as f:
         data = json.load(f)
-    labels = np.array([feat['properties']['subtype'] for feat in data['features']['xy']])
-    ids = [feat['properties']['uid'] for feat in data['features']['xy']]
-    annot = np.stack([ids, [sample] * len(ids)], axis=1)
+    
+    label_map = {feat['properties']['uid']: feat['properties']['subtype'] for feat in data['features']['xy']}
+    
+    pre_cropped = crop_buildings(img_path_pre, json_path_pre)
+    post_cropped = crop_buildings(img_path_post, json_path_post)
 
-    pre_cropped = crop_buildings(tif_path_pre, json_path_pre)
-    post_cropped = crop_buildings(tif_path_post, json_path_post)
-    all_cropped = [ np.concatenate( [pre_cropped[i],post_cropped[i]], axis= 2) for i in pre_cropped ]
-    X = np.stack(all_cropped, axis=0)
-    return X, labels, annot
+    X_list, y_list, Z_list = [], [], []
+
+    for uid in pre_cropped.keys():
+        if uid in post_cropped and uid in label_map:
+            combined = np.concatenate([pre_cropped[uid], post_cropped[uid]], axis=2)
+            X_list.append(combined)
+            y_list.append(label_map[uid])
+            Z_list.append([uid, sample])
+
+    if not X_list:
+        return np.empty((0, 128, 128, 6)), np.empty(0), np.empty((0, 2))
+
+    return np.stack(X_list, axis=0), np.array(y_list), np.array(Z_list)
+
 
 def preprocess(data_dir, max_workers=None):
-    """
-    Preprocesses satellite damage data from the given directory using parallel processing.
-
-    This function loads pre-disaster and post-disaster satellite images along with their
-    corresponding labels from the specified data directory. It processes each sample
-    by checking for the presence of required files and concatenating the processed data
-    into arrays.
-
-    Parameters:
-    data_dir (str): Path to the data directory containing 'images' and 'labels' subdirectories.
-                   The 'images' directory should contain .tif files, and 'labels' should contain .json files.
-    max_workers (int, optional): Number of parallel workers. If None, uses the number of CPU cores.
-
-    Returns:
-    tuple: A tuple containing three numpy arrays:
-        - X (numpy.ndarray): Array of shape (n_samples, 128, 128, 6) containing the processed image data.
-        - y (numpy.ndarray): Array of shape (n_samples,) containing the labels.
-        - Z (numpy.ndarray): Array of shape (n_samples, 2) containing additional metadata : file name and building's id.
-    """
-    image_dir = data_dir + "images/"
-    label_dir = data_dir + "labels/"
-
-    # Listing directory content
+    image_dir = os.path.join(data_dir, "images")
     image_list = os.listdir(image_dir)
-    label_list = os.listdir(label_dir)
+    label_list = os.listdir(os.path.join(data_dir, "labels"))
 
-    # Collect valid samples
     samples = []
     for image in image_list:
-        if image.endswith("_post_disaster.tif"):
-            image_pfx = image.replace("_post_disaster.tif", "")
-            image_pre = image_pfx + "_pre_disaster.tif"
-            label_post = image_pfx + "_post_disaster.json"
-            label_pre = image_pfx + "_pre_disaster.json"
-            if image_pre in image_list and label_post in label_list and label_pre in label_list:
+        if image.endswith("_post_disaster.png") or image.endswith("_post_disaster.tif"):
+            ext = ".png" if image.endswith(".png") else ".tif"
+            image_pfx = image.replace(f"_post_disaster{ext}", "")
+            if os.path.exists(os.path.join(data_dir, "labels", f"{image_pfx}_post_disaster.json")):
                 samples.append(image_pfx)
 
-    # Process samples in parallel
+    # --- FIXED INDENTATION: The processing starts AFTER the loop collects all IDs ---
+    print(f"Found {len(samples)} valid image pairs. Starting extraction...")
+    
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(partial(preprocess_sample, data_path=data_dir), samples, chunksize=1))
+        results = list(executor.map(partial(preprocess_sample, data_path=data_dir), samples))
 
-    # Concatenate results
     if results:
         X_list, y_list, Z_list = zip(*results)
         X = np.concatenate(X_list, axis=0)
         y = np.concatenate(y_list, axis=0)
         Z = np.concatenate(Z_list, axis=0)
     else:
-        X = np.empty((0, 128, 128, 6))
-        y = np.empty(0)
-        Z = np.empty((0, 2))
+        X, y, Z = np.empty((0, 128, 128, 6)), np.empty(0), np.empty((0, 2))
 
     return X, y, Z
