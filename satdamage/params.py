@@ -3,30 +3,36 @@ import os
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
-CROP_SIZE        = os.environ.get("CROP_SIZE")
-CROP_PADDING     = os.environ.get("CROP_PADDING")
-DAMAGE_TO_BINARY = os.environ.get("DAMAGE_TO_BINARY")
-TRAIN_RATIO      = os.environ.get("TRAIN_RATIO")
-VAL_RATIO        = os.environ.get("VAL_RATIO")
-TEST_RATIO       = os.environ.get("TEST_RATIO")
-RANDOM_SEED      = os.environ.get("RANDOM_SEED")
-BATCH_SIZE       = os.environ.get("BATCH_SIZE")
-EPOCHS           = os.environ.get("EPOCHS")
-SOURCE_SPLITS    = os.environ.get("SOURCE_SPLITS")
+CROP_SIZE        = (128, 128)
+CROP_PADDING     = 10
+DAMAGE_TO_BINARY = {
+    "no-damage": 0,
+    "minor-damage": 1,
+    "major-damage": 1,
+    "destroyed": 1,
+    "un-classified": None
+}
+TRAIN_RATIO   = 0.70
+VAL_RATIO     = 0.15
+TEST_RATIO    = 0.15
+RANDOM_SEED   = 42
+BATCH_SIZE    = 32
+EPOCHS        = 50
+SOURCE_SPLITS = ["train", "tier3"]
 
 # Chemins xView2
-TRAIN_DIR = os.environ.get("TRAIN_DIR")
-VAL_DIR   = os.environ.get("VAL_DIR")
-TEST_DIR  = os.environ.get("TEST_DIR")
+TRAIN_DIR = "data/train"
+VAL_DIR   = "data/val"
+TEST_DIR  = "data/test"
 
 # Entraînement
-LEARNING_RATE  = os.environ.get("LEARNING_RATE")
-WEIGHT_DECAY   = os.environ.get("WEIGHT_DECAY")
-DROPOUT_RATE   = os.environ.get("DROPOUT_RATE")
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY  = 1e-4
+DROPOUT_RATE  = 0.5
 
 # Sauvegarde
-CHECKPOINT_PATH = os.environ.get("CHECKPOINT_PATH")
-LOG_DIR         = os.environ.get("LOG_DIR")
+CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
+LOG_DIR         = "logs/cnn_damage"
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
