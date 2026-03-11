@@ -1,3 +1,10 @@
+numpy
+pandas
+seaborn
+matplotlib
+scikit-learn
+scipy
 tensorflow==2.16.2
+tensorboard
 rasterio==1.5.0
 shapely==2.1.2
