@@ -1,11 +1,10 @@
-
-
 import os
 import json
 import random
 import numpy as np
 import tensorflow as tf
 import rasterio
+from satdamage.params import *
 from pathlib import Path
 from PIL import Image
 from shapely.geometry import shape
@@ -13,7 +12,6 @@ from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
 from collections import Counter, defaultdict
 from typing import List, Tuple, Dict, Optional
-from satdamage.ml_logic.model import Config
 
 
 """
@@ -64,6 +62,7 @@ def load_json_buildings(json_path: str) -> List[Dict]:
         buildings.append({"polygon": geom, "damage": damage})
 
     return buildings
+
 
 
 # ─────────────────────────────────────────────
@@ -124,6 +123,7 @@ def crop_building(
     return np.array(pil_crop)
 
 
+
 # ─────────────────────────────────────────────
 # 3. TRAITEMENT D'UNE PAIRE D'IMAGES
 # ─────────────────────────────────────────────
@@ -165,6 +165,7 @@ def process_image_pair(
         samples.append((pre_crop, post_crop, label))
 
     return samples
+
 
 
 # ─────────────────────────────────────────────
@@ -218,6 +219,7 @@ def find_image_pairs(
     return pairs
 
 
+
 # ─────────────────────────────────────────────
 # 5. EXTRACTION DE TOUS LES SAMPLES
 # ─────────────────────────────────────────────
@@ -232,7 +234,7 @@ def build_all_samples(
     errors = 0
 
     for i, pair in enumerate(pairs):
-        if verbose and i % 100 == 0:
+        if verbose and (i+1) % 10 == 0:
             print(f"Processing {i+1}/{len(pairs)}: {pair['event']}")
         try:
             samples = process_image_pair(
@@ -287,8 +289,8 @@ def preprocess_pair(pre_image, post_image, label):
     """Concatenates and normalizes pre/post images."""
     pre = tf.cast(pre_image, tf.float32) / 255.0
     post = tf.cast(post_image, tf.float32) / 255.0
-    pre = tf.image.resize(pre, Config.IMAGE_SIZE)
-    post = tf.image.resize(post, Config.IMAGE_SIZE)
+    pre = tf.image.resize(pre, CROP_SIZE)
+    post = tf.image.resize(post, CROP_SIZE)
     combined = tf.concat([pre, post], axis=-1)
     return combined, label
 

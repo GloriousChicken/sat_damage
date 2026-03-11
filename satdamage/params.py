@@ -3,19 +3,39 @@ import os
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
-CROP_SIZE = (128, 128)
-CROP_PADDING = 10
+CROP_SIZE        = (128, 128)
+CROP_PADDING     = 10
 DAMAGE_TO_BINARY = {
     "no-damage": 0,
     "minor-damage": 1,
     "major-damage": 1,
     "destroyed": 1,
-    "un-classified": None,
+    "un-classified": None
 }
-TRAIN_RATIO = 0.70
-VAL_RATIO = 0.15
-TEST_RATIO = 0.15
-RANDOM_SEED = 42
+TRAIN_RATIO   = 0.70
+VAL_RATIO     = 0.15
+TEST_RATIO    = 0.15
+RANDOM_SEED   = 42
+BATCH_SIZE    = 32
+EPOCHS        = 50
+SOURCE_SPLITS = ["train", "tier3"]
+
+# Chemins xView2
+TRAIN_DIR = "data/train"
+VAL_DIR   = "data/val"
+TEST_DIR  = "data/test"
+
+# Entraînement
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY  = 1e-4
+DROPOUT_RATE  = 0.5
+
+# Sauvegarde
+CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
+LOG_DIR         = "logs/cnn_damage"
+
+####################  LOCAL PATH  ############
+DATA_DIR = os.environ.get("DATA_DIR")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
