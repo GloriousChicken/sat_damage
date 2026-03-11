@@ -2,6 +2,7 @@ make_repo_structure.sh
 *.ipynb
 doc/
 data/
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
