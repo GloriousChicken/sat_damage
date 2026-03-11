@@ -26,42 +26,7 @@ extracting building crops, splitting data, and building TensorFlow datasets.
 
 
 # ─────────────────────────────────────────────
-# 1. CONFIGURATION
-# ─────────────────────────────────────────────
-
-class DataConfig:
-    """
-    Configuration class for data preprocessing parameters.
-
-    Attributes:
-        XVIEW2_ROOT (str): Root directory for xView2 dataset.
-        CROP_SIZE (tuple): Target size for cropped building images (width, height).
-        CROP_PADDING (int): Padding added to bounding boxes in pixels.
-        DAMAGE_TO_BINARY (dict): Mapping from damage types to binary labels.
-        TRAIN_RATIO (float): Proportion of data for training.
-        VAL_RATIO (float): Proportion of data for validation.
-        TEST_RATIO (float): Proportion of data for testing.
-        RANDOM_SEED (int): Random seed for reproducibility.
-    """
-    XVIEW2_ROOT = "xview2"
-    CROP_SIZE = (128, 128)
-    CROP_PADDING = 10
-    DAMAGE_TO_BINARY = {
-        "no-damage": 0,
-        "minor-damage": 1,
-        "major-damage": 1,
-        "destroyed": 1,
-        "un-classified": None,
-    }
-    TRAIN_RATIO = 0.70
-    VAL_RATIO = 0.15
-    TEST_RATIO = 0.15
-    RANDOM_SEED = 42
-    # SOURCE_SPLITS = ["train", "tier3"]
-
-
-# ─────────────────────────────────────────────
-# 2. PARSING DES ANNOTATIONS JSON xView2
+# 1. PARSING DES ANNOTATIONS JSON xView2
 # ─────────────────────────────────────────────
 
 def load_json_buildings(json_path: str) -> List[Dict]:
@@ -102,14 +67,14 @@ def load_json_buildings(json_path: str) -> List[Dict]:
 
 
 # ─────────────────────────────────────────────
-# 3. EXTRACTION DES CROPS DE BÂTIMENTS
+# 2. EXTRACTION DES CROPS DE BÂTIMENTS
 # ─────────────────────────────────────────────
 
 def polygon_to_pixel_bbox(
     polygon,
     image_width:  int,
     image_height: int,
-    padding:      int = DataConfig.CROP_PADDING
+    padding:      int = CROP_PADDING
 ) -> Optional[Tuple[int, int, int, int]]:
     """
     Convert a shapely polygon to a pixel bounding box with padding and clipping.
@@ -118,7 +83,7 @@ def polygon_to_pixel_bbox(
         polygon: Shapely polygon object.
         image_width (int): Width of the image in pixels.
         image_height (int): Height of the image in pixels.
-        padding (int, optional): Padding to add to the bounding box. Defaults to DataConfig.CROP_PADDING.
+        padding (int, optional): Padding to add to the bounding box. Defaults to CROP_PADDING.
 
     Returns:
         Optional[Tuple[int, int, int, int]]: Bounding box as (x_min, y_min, x_max, y_max), or None if too small.
@@ -140,7 +105,7 @@ def polygon_to_pixel_bbox(
 def crop_building(
     image:       np.ndarray,
     bbox:        Tuple[int, int, int, int],
-    target_size: Tuple[int, int] = DataConfig.CROP_SIZE
+    target_size: Tuple[int, int] = CROP_SIZE
 ) -> np.ndarray:
 
     x_min, y_min, x_max, y_max = bbox
@@ -160,7 +125,7 @@ def crop_building(
 
 
 # ─────────────────────────────────────────────
-# 4. TRAITEMENT D'UNE PAIRE D'IMAGES
+# 3. TRAITEMENT D'UNE PAIRE D'IMAGES
 # ─────────────────────────────────────────────
 
 def process_image_pair(
@@ -189,7 +154,7 @@ def process_image_pair(
 
     for building in buildings:
         damage = building["damage"]
-        label = DataConfig.DAMAGE_TO_BINARY.get(damage, None)
+        label = DAMAGE_TO_BINARY.get(damage, None)
         if label is None:
             continue
         bbox = polygon_to_pixel_bbox(building["polygon"], w, h)
@@ -203,7 +168,7 @@ def process_image_pair(
 
 
 # ─────────────────────────────────────────────
-# 5. SCAN DES PAIRES D'IMAGES xView2
+# 4. SCAN DES PAIRES D'IMAGES xView2
 # ─────────────────────────────────────────────
 
 def find_image_pairs(
@@ -254,7 +219,7 @@ def find_image_pairs(
 
 
 # ─────────────────────────────────────────────
-# 6. EXTRACTION DE TOUS LES SAMPLES
+# 5. EXTRACTION DE TOUS LES SAMPLES
 # ─────────────────────────────────────────────
 
 def build_all_samples(
@@ -288,14 +253,14 @@ def build_all_samples(
 
 
 # ─────────────────────────────────────────────
-# 7. SPLIT TRAIN / VAL / TEST
+# 6. SPLIT TRAIN / VAL / TEST
 # ─────────────────────────────────────────────
 
 def pairs_split(
     pairs:       List[Dict[str, str]],
-    train_ratio: float = DataConfig.TRAIN_RATIO,
-    val_ratio:   float = DataConfig.VAL_RATIO,
-    seed:        int   = DataConfig.RANDOM_SEED
+    train_ratio: float = TRAIN_RATIO,
+    val_ratio:   float = VAL_RATIO,
+    seed:        int   = RANDOM_SEED
 ) -> Tuple[List, List, List]:
 
     n       = len(pairs)
@@ -315,7 +280,7 @@ def pairs_split(
 
 
 # ─────────────────────────────────────────────
-# 4. PRÉPROCESSING & DATA PIPELINE
+# 7. PRÉPROCESSING & DATA PIPELINE
 # ─────────────────────────────────────────────
 
 def preprocess_pair(pre_image, post_image, label):
