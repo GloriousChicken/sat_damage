@@ -2,8 +2,11 @@ import os
 import json
 import numpy as np
 import rasterio
+import rasterio.windows
 from shapely import wkt
 from PIL import Image
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 """
 This module provides preprocessing utilities for satellite imagery data used in damage assessment.
@@ -49,7 +52,7 @@ def crop_buildings(tif_path, json_path, padding=10, target_size=128):
     features = [f for f in data['features']['xy'] ]
     output = {}
 
-    for i,f in enumerate(features):
+    for f in features:
         geometry = f['wkt']
         geom = wkt.loads(geometry)
         minx, miny, maxx, maxy = geom.bounds
@@ -69,11 +72,11 @@ def crop_buildings(tif_path, json_path, padding=10, target_size=128):
                 return np.zeros_like(band, dtype=np.float32)
             return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
 
-        rgb = np.dstack([scale_band(crop[0]), scale_band(crop[1]), scale_band(crop[2])])
+        rgb = np.stack([scale_band(crop[0]), scale_band(crop[1]), scale_band(crop[2])], axis=-1)  # (H_crop, W_crop, 3)
 
         # Resize to target_size x target_size
         pil = Image.fromarray((rgb * 255).astype(np.uint8))
-        pil = pil.resize((target_size, target_size), Image.BILINEAR)
+        pil = pil.resize((target_size, target_size), Image.Resampling.LANCZOS)
 
         # Add to output dict
         output[f['properties']['uid']] = np.array(pil)
@@ -123,9 +126,9 @@ def preprocess_sample(sample, data_path):
     X = np.stack(all_cropped, axis=0)
     return X, labels, annot
 
-def preprocess(data_dir):
+def preprocess(data_dir, max_workers=None):
     """
-    Preprocesses satellite damage data from the given directory.
+    Preprocesses satellite damage data from the given directory using parallel processing.
 
     This function loads pre-disaster and post-disaster satellite images along with their
     corresponding labels from the specified data directory. It processes each sample
@@ -135,6 +138,7 @@ def preprocess(data_dir):
     Parameters:
     data_dir (str): Path to the data directory containing 'images' and 'labels' subdirectories.
                    The 'images' directory should contain .tif files, and 'labels' should contain .json files.
+    max_workers (int, optional): Number of parallel workers. If None, uses the number of CPU cores.
 
     Returns:
     tuple: A tuple containing three numpy arrays:
@@ -145,40 +149,34 @@ def preprocess(data_dir):
     image_dir = data_dir + "images/"
     label_dir = data_dir + "labels/"
 
-    image_pfx = ""
-
     # Listing directory content
     image_list = os.listdir(image_dir)
     label_list = os.listdir(label_dir)
 
-    X = np.empty((0, 128, 128, 6))
-    # print("X", X.shape)
-    y = np.empty(0)
-    # print("y", y.shape)
-    Z = np.empty((0, 2))
-    # print("Z", Z.shape)
-
-    # Looping over files
+    # Collect valid samples
+    samples = []
     for image in image_list:
-        # Checking presence of 4 files with same prefix
         if image.endswith("_post_disaster.tif"):
             image_pfx = image.replace("_post_disaster.tif", "")
             image_pre = image_pfx + "_pre_disaster.tif"
             label_post = image_pfx + "_post_disaster.json"
             label_pre = image_pfx + "_pre_disaster.json"
-            if image_pre not in image_list:
-                print("Fichier image pre-disaster manquant")
-                continue
-            if label_post not in label_list:
-                print("Fichier label post-disaster manquant")
-                continue
-            if label_pre not in label_list:
-                print("Fichier label post-disaster manquant")
-                continue
-            # Calling preprocessing of sample
-            new_X, new_y, new_Z = preprocess_sample(image_pfx, data_dir)
-            X = np.concatenate((X, new_X), axis=0)
-            y = np.concatenate((y, new_y))
-            Z = np.concatenate((Z, new_Z), axis=0)
+            if image_pre in image_list and label_post in label_list and label_pre in label_list:
+                samples.append(image_pfx)
+
+    # Process samples in parallel
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(partial(preprocess_sample, data_path=data_dir), samples, chunksize=1))
+
+    # Concatenate results
+    if results:
+        X_list, y_list, Z_list = zip(*results)
+        X = np.concatenate(X_list, axis=0)
+        y = np.concatenate(y_list, axis=0)
+        Z = np.concatenate(Z_list, axis=0)
+    else:
+        X = np.empty((0, 128, 128, 6))
+        y = np.empty(0)
+        Z = np.empty((0, 2))
 
     return X, y, Z
