@@ -10,8 +10,9 @@ from PIL import Image
 from shapely.geometry import shape
 from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import List, Tuple, Dict, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 """
@@ -234,27 +235,43 @@ def find_image_pairs(
 # 5. EXTRACTION DE TOUS LES SAMPLES
 # ─────────────────────────────────────────────
 
+def _process_pair(pair: Dict[str, str]) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int], int]:
+    """Worker function: processes a single image pair and returns its samples."""
+    try:
+        samples = process_image_pair(
+            pair["pre_img"], pair["post_img"], pair["post_label"]
+        )
+        image_pairs = [(pre_crop, post_crop) for pre_crop, post_crop, _ in samples]
+        labels = [label for _, _, label in samples]
+        return image_pairs, labels, 0
+    except Exception:
+        return [], [], 1
+
+
 def build_all_samples(
     pairs: List[Dict[str, str]],
-    verbose: bool = True
+    verbose: bool = True,
+    max_workers: int = None,
 ) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int]]:
 
     image_pairs = []
     labels = []
     errors = 0
+    completed = 0
 
-    for i, pair in enumerate(pairs):
-        if verbose and (i+1) % 10 == 0:
-            print(f"Processing {i+1}/{len(pairs)}: {pair['event']}")
-        try:
-            samples = process_image_pair(
-                pair["pre_img"], pair["post_img"], pair["post_label"]
-            )
-            for pre_crop, post_crop, label in samples:
-                image_pairs.append((pre_crop, post_crop))
-                labels.append(label)
-        except Exception:
-            errors += 1
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_pair = {executor.submit(_process_pair, pair): pair for pair in pairs}
+
+        for future in as_completed(future_to_pair):
+            pair_image_pairs, pair_labels, pair_errors = future.result()
+            image_pairs.extend(pair_image_pairs)
+            labels.extend(pair_labels)
+            errors += pair_errors
+
+            completed += 1
+            if verbose and completed % 10 == 0:
+                pair = future_to_pair[future]
+                print(f"Processed {completed}/{len(pairs)}: {pair['event']}")
 
     if verbose:
         dist = Counter(labels)
