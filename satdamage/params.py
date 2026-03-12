@@ -34,6 +34,9 @@ DROPOUT_RATE  = 0.5
 CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
 LOG_DIR         = "logs/cnn_damage"
 
+# Model selection
+MODEL_ARCHITECTURE = "dual"  # Options: "concat", "dual"
+
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
 
