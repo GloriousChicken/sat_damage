@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from collections import Counter
 from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from google.cloud import storage
 
 
 """
@@ -29,9 +30,21 @@ extracting building crops, splitting data, and building TensorFlow datasets.
 # ─────────────────────────────────────────────
 
 def load_json_buildings(json_path: str) -> List[Dict]:
-
-    with open(json_path, "r") as f:
-        data = json.load(f)
+    """
+    Loads building annotations from a JSON file and returns a list of building dicts with 'polygon' and 'damage' keys.
+    Supports both local files and GCS paths based on MODEL_TARGET.
+    """
+    if MODEL_TARGET == "local":
+        with open(json_path, "r") as f:
+            data = json.load(f)
+    elif MODEL_TARGET == "gcs":
+        client = storage.Client()
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(json_path)
+        data = json.loads(blob.download_as_text())
+    else:
+        print(f"[WARN] Unsupported MODEL_TARGET: {MODEL_TARGET}")
+        return []
 
     buildings = []
     features  = data.get("features", {}).get("xy", [])
@@ -107,6 +120,14 @@ def crop_building(
     bbox:        Tuple[int, int, int, int],
     target_size: Tuple[int, int] = CROP_SIZE
 ) -> np.ndarray:
+    """
+    Crop a building from the image using the bounding box and apply percentile-based normalization.
+    Args:
+        image (np.ndarray): Input image as a HxWxC array.
+        bbox (Tuple[int, int, int, int]): Bounding box as (x_min, y_min, x_max, y_max).
+        target_size (Tuple[int, int], optional): Desired output size (width, height). Defaults to CROP_SIZE.
+    Returns:
+        np.ndarray: Cropped and normalized image as a target_size array."""
 
     x_min, y_min, x_max, y_max = bbox
     crop     = image[y_min:y_max, x_min:x_max, :]
@@ -134,7 +155,10 @@ def process_image_pair(
     post_path: str,
     label_post_path: str,
 ) -> List[Tuple[np.ndarray, np.ndarray, int]]:
-
+    """
+    Processes a single image pair and its annotations to extract building crops and labels.
+    Returns a list of tuples: (pre_crop, post_crop, label) for each building
+    """
     def _load_image(path: str) -> np.ndarray:
         """Loads PNG or TIFF as RGB uint8."""
         p = Path(path)
@@ -176,6 +200,12 @@ def process_image_pair(
 def find_image_pairs(
     xview2_root: str
 ) -> List[Dict[str, str]]:
+    """
+    Scans the xView2 dataset directory to find all valid image pairs and their corresponding labels.
+    Returns a list of dicts with keys: 'pre_img', 'post_img', 'post_label', 'event'.
+    The function looks for "images" directories, finds post-disaster images,
+    and checks for corresponding pre-disaster images and label JSONs.
+    """
     pairs = []
     root = Path(xview2_root)
 
@@ -236,7 +266,9 @@ def find_image_pairs(
 # ─────────────────────────────────────────────
 
 def _process_pair(pair: Dict[str, str]) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int], int]:
-    """Worker function: processes a single image pair and returns its samples."""
+    """
+    Worker function: processes a single image pair and returns its samples.
+    """
     try:
         samples = process_image_pair(
             pair["pre_img"], pair["post_img"], pair["post_label"]
@@ -253,7 +285,16 @@ def build_all_samples(
     verbose: bool = True,
     max_workers: int = None,
 ) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int]]:
+    """
+    Processes all image pairs in parallel and aggregates the results.
 
+    Args:
+        pairs: List of image pair dicts to process.
+        verbose: Whether to print progress and summary statistics.
+        max_workers: Maximum number of parallel workers (defaults to number of CPU cores).
+    Returns:
+        image_pairs: List of (pre_crop, post_crop) tuples.
+        labels: List of corresponding binary labels."""
     image_pairs = []
     labels = []
     errors = 0
@@ -306,7 +347,6 @@ def split_samples(
     Returns:
         train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
     """
-    from sklearn.model_selection import train_test_split
 
     # First split: train + (val + test)
     train_samples, temp_samples, train_labels, temp_labels = train_test_split(
