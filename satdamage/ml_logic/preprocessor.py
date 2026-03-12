@@ -349,9 +349,11 @@ def preprocess_pair(pre_image, post_image, label):
 def augment(image, label):
     """Applies basic augmentations."""
     image = tf.image.random_flip_left_right(image)
+    image = tf.image.random_flip_up_down(image)
     k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
     image = tf.image.rot90(image, k)
     image = tf.image.random_brightness(image, max_delta=0.1)
+    image = tf.clip_by_value(image, 0.0, 1.0)  # prevent out-of-range values after brightness
     image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
     return image, label
 
@@ -398,12 +400,12 @@ def build_dataset(image_pairs, labels, training=False, batch_size=32, balance=Tr
 
     pre_images = np.array([p[0] for p in image_pairs])
     post_images = np.array([p[1] for p in image_pairs])
-    labels_arr = np.array(labels, dtype=np.float32)
+    labels_arr = np.array(labels, dtype=np.float32).reshape(-1, 1)
 
     ds = tf.data.Dataset.from_tensor_slices(((pre_images, post_images), labels_arr))
     ds = ds.map(lambda imgs, lbl: preprocess_pair(imgs[0], imgs[1], lbl), num_parallel_calls=tf.data.AUTOTUNE)
     if training:
-        # ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(1000)
 
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
