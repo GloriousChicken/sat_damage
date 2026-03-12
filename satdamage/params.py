@@ -26,7 +26,7 @@ VAL_DIR   = "data/val"
 TEST_DIR  = "data/test"
 
 # Entraînement
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
@@ -53,6 +53,9 @@ PREFECT_LOG_LEVEL = os.environ.get("PREFECT_LOG_LEVEL")
 
 GAR_IMAGE = os.environ.get("GAR_IMAGE")
 GAR_MEMORY = os.environ.get("GAR_MEMORY")
+
+##################  CONSTANTS  #####################
+LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "training_outputs")
 
 ##################  VALIDATIONS  ################
 
