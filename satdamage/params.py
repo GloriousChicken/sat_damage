@@ -37,6 +37,10 @@ MODEL_ARCHITECTURE = "concat"  # Options: "concat", "dual"
 CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
 LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
 
+# Sauvegarde
+CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
+
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
 
