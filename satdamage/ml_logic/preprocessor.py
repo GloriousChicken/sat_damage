@@ -173,51 +173,57 @@ def process_image_pair(
 # ─────────────────────────────────────────────
 
 def find_image_pairs(
-    xview2_root:   str
+    xview2_root: str
 ) -> List[Dict[str, str]]:
-
     pairs = []
-    root  = Path(xview2_root)
+    root = Path(xview2_root)
 
-    img_dir   = root / "images"
-    label_dir = root / "labels"
+    # Recursively find all directories named "images" under root
+    images_dirs = list(root.rglob("images"))
 
-    if not img_dir.exists():
-        print(f"[WARN] Dossier introuvable : {img_dir}")
+    if not images_dirs:
+        print(f"[WARN] Aucun dossier 'images' trouvé sous : {root}")
         return pairs
 
-    # Chercher les fichiers post_disaster en PNG ou TIFF
-    post_images = sorted(
-        list(img_dir.glob("*_post_disaster.png")) +
-        list(img_dir.glob("*_post_disaster.tif")) +
-        list(img_dir.glob("*_post_disaster.tiff"))
-    )
+    for img_dir in images_dirs:
+        # Assume "labels" is a sibling directory to "images"
+        label_dir = img_dir.parent / "labels"
 
-    for post_img_path in post_images:
-        stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
-        ext  = post_img_path.suffix # ex: .png ou .tif ou .tiff
-
-        pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
-        pre_img_path    = img_dir   / f"{pre_stem}{ext}"
-        post_label_path = label_dir / f"{stem}.json"
-
-        if not pre_img_path.exists() or not post_label_path.exists():
+        if not label_dir.exists() or not label_dir.is_dir():
+            print(f"[WARN] Dossier 'labels' manquant ou invalide pour : {img_dir}")
             continue
 
-        # Nom de l'événement : tout sauf les deux derniers segments
-        # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
-        event = "_".join(stem.split("_")[:-2])
+        # Chercher les fichiers post_disaster en PNG ou TIFF dans ce dossier images
+        post_images = sorted(
+            list(img_dir.glob("*_post_disaster.png")) +
+            list(img_dir.glob("*_post_disaster.tif")) +
+            list(img_dir.glob("*_post_disaster.tiff"))
+        )
 
-        pairs.append({
-            "pre_img":    str(pre_img_path),
-            "post_img":   str(post_img_path),
-            "post_label": str(post_label_path),
-            "event":      event,
-        })
+        for post_img_path in post_images:
+            stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
+            ext = post_img_path.suffix  # ex: .png ou .tif ou .tiff
 
-    print(f"[INFO] {len(pairs)} paires d'images trouvées ")
+            pre_stem = stem.replace("_post_disaster", "_pre_disaster")
+            pre_img_path = img_dir / f"{pre_stem}{ext}"
+            post_label_path = label_dir / f"{stem}.json"
+
+            if not pre_img_path.exists() or not post_label_path.exists():
+                continue
+
+            # Nom de l'événement : tout sauf les deux derniers segments
+            # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
+            event = "_".join(stem.split("_")[:-2])
+
+            pairs.append({
+                "pre_img": str(pre_img_path),
+                "post_img": str(post_img_path),
+                "post_label": str(post_label_path),
+                "event": event,
+            })
+
+    print(f"[INFO] {len(pairs)} paires d'images trouvées dans tous les sous-dossiers")
     return pairs
-
 
 
 # ─────────────────────────────────────────────
