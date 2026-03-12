@@ -60,7 +60,7 @@ LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops"
 ##################  VALIDATIONS  ################
 
 env_valid_options = dict(
-    MODEL_TARGET=["local", "gcs", "mlflow"]
+    MODEL_TARGET=["local", "gcs"]
 )
 
 def validate_env_value(env, valid_options):

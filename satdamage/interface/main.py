@@ -1,9 +1,11 @@
 import numpy as np
 from time import time
 from sklearn.utils.class_weight import compute_class_weight
-from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, split_samples, build_all_samples
+from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, find_image_pairs_gcs, split_samples, build_all_samples
 from satdamage.ml_logic.model import train, evaluate
-from satdamage.params import DATA_DIR
+from satdamage.params import MODEL_TARGET, DATA_DIR
+from google.cloud import storage
+
 
 # ─────────────────────────────────────────────
 # 1. GESTION DU DÉSÉQUILIBRE DE CLASSES
@@ -55,7 +57,11 @@ def build_xview2_datasets(xview2_root: str):
     # ── 1. Scan
     start_time = time()
     print("\n[1/5] Scan des paires d'images...")
-    all_pairs = find_image_pairs(xview2_root)
+    if MODEL_TARGET == "local":
+        all_pairs = find_image_pairs(xview2_root)
+    else:
+        all_pairs = find_image_pairs_gcs(xview2_root)
+
     if not all_pairs:
         raise FileNotFoundError(
             f"Aucune paire trouvée dans {xview2_root}. "

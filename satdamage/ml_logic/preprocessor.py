@@ -1,4 +1,5 @@
 import os
+from io import BytesIO
 import json
 import random
 import numpy as np
@@ -14,6 +15,8 @@ from collections import Counter
 from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from google.cloud import storage
+from imblearn.over_sampling import RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
 
 
 """
@@ -23,6 +26,11 @@ This module handles loading, cropping, and preparing building damage detection s
 from pre- and post-disaster images. It includes functions for parsing annotations,
 extracting building crops, splitting data, and building TensorFlow datasets.
 """
+
+
+if MODEL_TARGET == "gcs":
+    CLIENT = storage.Client()
+    BUCKET = CLIENT.bucket(BUCKET_NAME)
 
 
 # ─────────────────────────────────────────────
@@ -38,9 +46,7 @@ def load_json_buildings(json_path: str) -> List[Dict]:
         with open(json_path, "r") as f:
             data = json.load(f)
     elif MODEL_TARGET == "gcs":
-        client = storage.Client()
-        bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob(json_path)
+        blob = BUCKET.blob(json_path)
         data = json.loads(blob.download_as_text())
     else:
         print(f"[WARN] Unsupported MODEL_TARGET: {MODEL_TARGET}")
@@ -159,16 +165,37 @@ def process_image_pair(
     Processes a single image pair and its annotations to extract building crops and labels.
     Returns a list of tuples: (pre_crop, post_crop, label) for each building
     """
+
     def _load_image(path: str) -> np.ndarray:
-        """Loads PNG or TIFF as RGB uint8."""
+        """
+        Loads PNG or TIFF as RGB uint8.
+        """
         p = Path(path)
         if p.suffix.lower() in ['.tif', '.tiff']:
-            with rasterio.open(path) as src:
-                data = src.read()
-                rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
-                img = rgb.transpose(1, 2, 0)
-                return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
-        return np.array(Image.open(path).convert("RGB"))
+            if MODEL_TARGET == "local":
+                with rasterio.open(path) as src:
+                    data = src.read()
+                    rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
+                    img = rgb.transpose(1, 2, 0)
+                    return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
+            else:
+                blob = BUCKET.blob(path)
+                bytes_data = blob.download_as_bytes()
+                with rasterio.MemoryFile(bytes_data) as memfile:
+                    with memfile.open() as src:
+                        data = src.read()
+                        rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
+                        img = rgb.transpose(1, 2, 0)
+                        return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
+        else:
+            if MODEL_TARGET == "local":
+                return np.array(Image.open(path).convert("RGB"))
+            else:
+                blob = BUCKET.blob(path)
+                bytes_data = blob.download_as_bytes()
+                return np.array(Image.open(BytesIO(bytes_data)).convert("RGB"))
+
+        return np.zeros((256, 256, 3), dtype=np.uint8)
 
     pre_img = _load_image(pre_path)
     post_img = _load_image(post_path)
@@ -194,7 +221,7 @@ def process_image_pair(
 
 
 # ─────────────────────────────────────────────
-# 4. SCAN DES PAIRES D'IMAGES xView2
+# 4-1. SCAN DES PAIRES D'IMAGES xView2 EN LOCAL
 # ─────────────────────────────────────────────
 
 def find_image_pairs(
@@ -260,6 +287,75 @@ def find_image_pairs(
     print(f"[INFO] {len(pairs)} paires d'images trouvées dans tous les sous-dossiers")
     return pairs
 
+
+# ─────────────────────────────────────────────
+# 4-2. SCAN DES PAIRES D'IMAGES xView2 SUR GCS
+# ─────────────────────────────────────────────
+
+def find_image_pairs_gcs(
+    prefix: str = ""
+) -> List[Dict[str, str]]:
+    """
+    Scans the xView2 dataset on a GCS bucket to find all valid image pairs and labels.
+    Returns a list of dicts with keys: 'pre_img', 'post_img', 'post_label', 'event'.
+
+    Args:
+        prefix: Optional prefix to narrow the scan (e.g. "train/" or "")
+    """
+    pairs = []
+
+    # Lister tous les blobs du bucket sous le prefix donné
+    all_blobs = set(
+        blob.name for blob in CLIENT.list_blobs(BUCKET_NAME, prefix=prefix)
+    )
+
+    if not all_blobs:
+        print(f"[WARN] Aucun fichier trouvé sous gs://{BUCKET_NAME}/{prefix}")
+        return pairs
+
+    # Filtrer uniquement les images post_disaster
+    post_blobs = sorted([
+        b for b in all_blobs
+        if "_post_disaster" in b and b.endswith((".png", ".tif", ".tiff"))
+        and "/images/" in b
+    ])
+
+    for post_blob_name in post_blobs:
+        # ex: "train/hurricane-florence/images/hurricane-florence_00000001_post_disaster.png"
+        parts = post_blob_name.rsplit("/", 1)   # ["train/.../images", "filename.png"]
+        img_dir_prefix = parts[0]               # "train/.../images"
+        filename = parts[1]                     # "hurricane-florence_00000001_post_disaster.png"
+
+        stem, ext = filename.rsplit(".", 1)
+        ext = f".{ext}"
+
+        # Construire les chemins pre_disaster et label
+        pre_stem = stem.replace("_post_disaster", "_pre_disaster")
+        label_dir_prefix = img_dir_prefix.replace("/images", "/labels")
+
+        pre_blob_name   = f"{img_dir_prefix}/{pre_stem}{ext}"
+        label_blob_name = f"{label_dir_prefix}/{stem}.json"
+
+        # Vérifier l'existence dans le set de blobs
+        if pre_blob_name not in all_blobs:
+            print(f"[WARN] Image pre_disaster manquante : {pre_blob_name}")
+            continue
+        if label_blob_name not in all_blobs:
+            print(f"[WARN] Label manquant : {label_blob_name}")
+            continue
+
+        # Nom de l'événement extrait du stem
+        event = "_".join(stem.split("_")[:-2])
+
+        pairs.append({
+            "pre_img":    pre_blob_name,
+            "post_img":   post_blob_name,
+            "post_label": label_blob_name,
+            "event":      event
+        })
+
+    print(f"[INFO] {len(pairs)} paires trouvées dans gs://{BUCKET_NAME}/{prefix}")
+    return pairs
 
 # ─────────────────────────────────────────────
 # 5. EXTRACTION DE TOUS LES SAMPLES
@@ -398,8 +494,6 @@ def augment(image, label):
 
 def balance_dataset(image_pairs, labels, majority_ratio=2):
     """Balances the dataset by oversampling the minority class and undersampling the majority class."""
-    from imblearn.over_sampling import RandomOverSampler
-    from imblearn.under_sampling import RandomUnderSampler
 
     # Reshape image_pairs into a 2D array for imblearn
     X = np.array([np.concatenate([p[0].flatten(), p[1].flatten()]) for p in image_pairs])
