@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
 from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, split_samples, build_all_samples
-from satdamage.ml_logic.model import train, evaluate
+from satdamage.ml_logic.model import train, evaluate, train_efficientnet, evaluate_efficientnet
 from satdamage.params import DATA_DIR
 
 # ─────────────────────────────────────────────
@@ -62,7 +62,7 @@ def build_xview2_datasets(xview2_root: str):
 
     # ── 2. Extraction de TOUS les crops (avant le split)
     print("\n[2/5] Extraction de tous les crops...")
-    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
+    all_samples, all_labels = build_all_samples(all_pairs[:100], verbose=True)
     if not all_samples:
         raise ValueError("Aucun crop extrait. Vérifiez les données.")
 
@@ -107,9 +107,12 @@ if __name__ == "__main__":
     )
 
     # ── Lancement de l'entraînement
-
-    model, history = train(train_ds, val_ds, class_weights=class_weights)
-    evaluate(model, test_ds)
+    # CNN PRINCIPALE
+    # model, history = train(train_ds, val_ds, class_weights=class_weights)
+    # evaluate(model, test_ds)
+    # EFFICIENTNET
+    model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds, class_weights=class_weights)
+    evaluate_efficientnet(model, test_ds)
 
     # ── Debug pas à pas (décommenter si besoin)
     #
