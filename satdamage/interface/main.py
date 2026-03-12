@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
-from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, pairs_split, build_all_samples
+from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, split_samples, build_all_samples
 from satdamage.ml_logic.model import train, evaluate
 from satdamage.params import DATA_DIR
 
@@ -60,19 +60,17 @@ def build_xview2_datasets(xview2_root: str):
             "Vérifiez la structure du dossier."
         )
 
-    # ── 2. Split par événement
-    print("\n[2/5] Split train / val / test...")
-    train_pairs, val_pairs, test_pairs = pairs_split(all_pairs)
+    # ── 2. Extraction de TOUS les crops (avant le split)
+    print("\n[2/5] Extraction de tous les crops...")
+    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
+    if not all_samples:
+        raise ValueError("Aucun crop extrait. Vérifiez les données.")
 
-    # ── 3. Extraction des crops
-    print("\n[3/5] Extraction des crops — Train...")
-    train_img_pairs, train_labels = build_all_samples(train_pairs)
-
-    print("\n      Extraction des crops — Val...")
-    val_img_pairs,   val_labels   = build_all_samples(val_pairs,  verbose=False)
-
-    print("\n      Extraction des crops — Test...")
-    test_img_pairs,  test_labels  = build_all_samples(test_pairs, verbose=False)
+    # ── 3. Split stratifié des crops
+    print("\n[3/5] Split stratifié train / val / test...")
+    train_samples, val_samples, test_samples, train_labels, val_labels, test_labels = split_samples(
+        all_samples, all_labels
+    )
 
     # ── 4. Class weights
     print("\n[4/5] Calcul des class weights...")
@@ -82,9 +80,9 @@ def build_xview2_datasets(xview2_root: str):
 
     # ── 5. tf.data.Dataset
     print("\n[5/5] Construction des tf.data.Dataset...")
-    train_ds = build_dataset(train_img_pairs, train_labels, training=False)
-    val_ds   = build_dataset(val_img_pairs,   val_labels,   training=False)
-    test_ds  = build_dataset(test_img_pairs,  test_labels,  training=False)
+    train_ds = build_dataset(train_samples, train_labels, training=True)
+    val_ds   = build_dataset(val_samples,   val_labels,   training=False)
+    test_ds  = build_dataset(test_samples,  test_labels,  training=False)
 
     print("\n" + "=" * 55)
     print("  Datasets prêts !")
