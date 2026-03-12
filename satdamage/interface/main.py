@@ -72,11 +72,13 @@ def build_xview2_datasets(xview2_root: str):
         all_samples, all_labels
     )
 
+
     # ── 4. Class weights
     print("\n[4/5] Calcul des class weights...")
     class_weights = compute_class_weights(train_labels)
     print(f"  class_weight[0] = {class_weights[0]:.3f}")
     print(f"  class_weight[1] = {class_weights[1]:.3f}")
+
 
     # ── 5. tf.data.Dataset
     print("\n[5/5] Construction des tf.data.Dataset...")
@@ -108,7 +110,8 @@ if __name__ == "__main__":
 
     # ── Lancement de l'entraînement
 
-    model, history = train(train_ds, val_ds, class_weights=class_weights)
+    model, history = train(train_ds, val_ds)
+    # model, history = train(train_ds, val_ds, class_weights=class_weights)
     evaluate(model, test_ds)
 
     # ── Debug pas à pas (décommenter si besoin)
