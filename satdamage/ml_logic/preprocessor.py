@@ -268,27 +268,52 @@ def build_all_samples(
 # 6. SPLIT TRAIN / VAL / TEST
 # ─────────────────────────────────────────────
 
-def pairs_split(
-    pairs:       List[Dict[str, str]],
+def split_samples(
+    samples: List[Tuple[np.ndarray, np.ndarray]],  # List of (pre_crop, post_crop)
+    labels: List[int],
     train_ratio: float = TRAIN_RATIO,
-    val_ratio:   float = VAL_RATIO,
-    seed:        int   = RANDOM_SEED
-) -> Tuple[List, List, List]:
+    val_ratio: float = VAL_RATIO,
+    seed: int = RANDOM_SEED
+) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[int], List[int], List[int]]:
+    """
+    Stratified split of samples (crops) into train, val, test sets.
+    Preserves label distribution using stratification.
 
-    n       = len(pairs)
-    n_train = int(n * train_ratio)
-    n_val   = int(n * val_ratio)
+    Args:
+        samples: List of (pre_crop, post_crop) tuples.
+        labels: Corresponding list of labels.
+        train_ratio: Fraction for train.
+        val_ratio: Fraction for val.
+        seed: Random seed for reproducibility.
 
-    train_pairs = pairs[:n_train]
-    val_pairs   = pairs[n_train:n_train + n_val]
-    test_pairs  = pairs[n_train + n_val:]
+    Returns:
+        train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
+    """
+    from sklearn.model_selection import train_test_split
 
-    print(f"\n[INFO] Split :")
-    print(f"  Train : {len(train_pairs):>5} paires d'images")
-    print(f"  Val   : {len(val_pairs):>5} paires d'images")
-    print(f"  Test  : {len(test_pairs):>5} paires d'images")
+    # First split: train + (val + test)
+    train_samples, temp_samples, train_labels, temp_labels = train_test_split(
+        samples, labels,
+        test_size=(1 - train_ratio),
+        stratify=labels,
+        random_state=seed
+    )
 
-    return train_pairs, val_pairs, test_pairs
+    # Second split: val and test from the remainder
+    val_ratio_adjusted = val_ratio / (val_ratio + (1 - train_ratio - val_ratio))  # Normalize val_ratio for the temp set
+    val_samples, test_samples, val_labels, test_labels = train_test_split(
+        temp_samples, temp_labels,
+        test_size=(1 - val_ratio_adjusted),
+        stratify=temp_labels,
+        random_state=seed
+    )
+
+    print(f"\n[INFO] Stratified Split (Crop-Level):")
+    print(f"  Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
+    print(f"  Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
+    print(f"  Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
+
+    return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
 
 
 # ─────────────────────────────────────────────
@@ -322,7 +347,7 @@ def build_dataset(image_pairs, labels, training=False, batch_size=32):
     ds = tf.data.Dataset.from_tensor_slices(((pre_images, post_images), labels_arr))
     ds = ds.map(lambda imgs, lbl: preprocess_pair(imgs[0], imgs[1], lbl), num_parallel_calls=tf.data.AUTOTUNE)
     if training:
-        ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
+        # ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(1000)
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     return ds
