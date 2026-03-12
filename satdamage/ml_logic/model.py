@@ -119,7 +119,8 @@ def compile_model(model):
         optimizer=tf.keras.optimizers.Adam(
             learning_rate=LEARNING_RATE
         ),
-        loss=tf.keras.losses.BinaryCrossentropy(),
+        # loss=tf.keras.losses.BinaryCrossentropy(),
+        loss = tf.keras.losses.BinaryFocalCrossentropy(gamma=2.0),  # Focal Loss pour mieux gérer le déséquilibre
         metrics=[
             tf.keras.metrics.BinaryAccuracy(name="accuracy"),
             tf.keras.metrics.Precision(name="precision"),
