@@ -1,6 +1,5 @@
 import os
 import json
-import random
 import numpy as np
 import tensorflow as tf
 import rasterio
@@ -14,13 +13,12 @@ from collections import Counter
 from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-
 """
-Module for preprocessing satellite imagery data from xView2 dataset.
-
-This module handles loading, cropping, and preparing building damage detection samples
-from pre- and post-disaster images. It includes functions for parsing annotations,
-extracting building crops, splitting data, and building TensorFlow datasets.
+Refactored preprocessor: saves crops to disk instead of loading all into RAM.
+Pipeline:
+    1. find_image_pairs()      → list of (pre, post, label) paths
+    2. extract_crops_to_disk() → saves PNGs to CROPS_DIR/{train,val,test}/{0,1}/
+    3. build_dataset_from_dir()→ lazy tf.data.Dataset via image_dataset_from_directory
 """
 
 
@@ -29,20 +27,17 @@ extracting building crops, splitting data, and building TensorFlow datasets.
 # ─────────────────────────────────────────────
 
 def load_json_buildings(json_path: str) -> List[Dict]:
-
     with open(json_path, "r") as f:
         data = json.load(f)
 
     buildings = []
-    features  = data.get("features", {}).get("xy", [])
+    features = data.get("features", {}).get("xy", [])
 
     for feature in features:
         props  = feature.get("properties", {})
         damage = props.get("subtype", "un-classified")
 
         geom = None
-
-        # ── Format WKT (le plus courant dans xView2)
         wkt_str = feature.get("wkt", "")
         if wkt_str:
             try:
@@ -50,7 +45,6 @@ def load_json_buildings(json_path: str) -> List[Dict]:
             except Exception:
                 pass
 
-        # ── Format GeoJSON (fallback)
         if geom is None:
             try:
                 geom = shape(feature.get("geometry", {}))
@@ -65,136 +59,117 @@ def load_json_buildings(json_path: str) -> List[Dict]:
     return buildings
 
 
-
 # ─────────────────────────────────────────────
-# 2. EXTRACTION DES CROPS DE BÂTIMENTS
+# 2. EXTRACTION D'UN CROP
 # ─────────────────────────────────────────────
 
-def polygon_to_pixel_bbox(
-    polygon,
-    image_width:  int,
-    image_height: int,
-    padding:      int = CROP_PADDING
-) -> Optional[Tuple[int, int, int, int]]:
-    """
-    Convert a shapely polygon to a pixel bounding box with padding and clipping.
+def _load_image(path: str) -> np.ndarray:
+    """Load PNG or TIFF as RGB uint8."""
+    p = Path(path)
+    if p.suffix.lower() in ['.tif', '.tiff']:
+        with rasterio.open(path) as src:
+            data = src.read()
+            rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
+            img = rgb.transpose(1, 2, 0)
+            return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
+    return np.array(Image.open(path).convert("RGB"))
 
-    Args:
-        polygon: Shapely polygon object.
-        image_width (int): Width of the image in pixels.
-        image_height (int): Height of the image in pixels.
-        padding (int, optional): Padding to add to the bounding box. Defaults to CROP_PADDING.
 
-    Returns:
-        Optional[Tuple[int, int, int, int]]: Bounding box as (x_min, y_min, x_max, y_max), or None if too small.
-    """
+def _scale_band(band: np.ndarray) -> np.ndarray:
+    p2, p98 = np.percentile(band, 2), np.percentile(band, 98)
+    if p98 == p2:
+        return np.zeros_like(band, dtype=np.float32)
+    return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
+
+
+def _crop_and_scale(image: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+    x_min, y_min, x_max, y_max = bbox
+    crop = image[y_min:y_max, x_min:x_max, :]
+    rgb  = np.stack([_scale_band(crop[:,:,i]) for i in range(3)], axis=-1)
+    pil  = Image.fromarray((rgb * 255).astype(np.uint8))
+    pil  = pil.resize(CROP_SIZE, Image.Resampling.LANCZOS)
+    return np.array(pil)
+
+
+def _polygon_to_bbox(polygon, w, h, padding=CROP_PADDING):
     minx, miny, maxx, maxy = polygon.bounds
-
     x_min = max(0, int(minx) - padding)
     y_min = max(0, int(miny) - padding)
-    x_max = min(image_width,  int(maxx) + padding)
-    y_max = min(image_height, int(maxy) + padding)
-
-    # Ignorer les bâtiments trop petits (bruit d'annotation)
+    x_max = min(w, int(maxx) + padding)
+    y_max = min(h, int(maxy) + padding)
     if (x_max - x_min) < 10 or (y_max - y_min) < 10:
         return None
-
     return x_min, y_min, x_max, y_max
 
 
-def crop_building(
-    image:       np.ndarray,
-    bbox:        Tuple[int, int, int, int],
-    target_size: Tuple[int, int] = CROP_SIZE
-) -> np.ndarray:
+# ─────────────────────────────────────────────
+# 3. WORKER: PROCESS ONE PAIR → SAVE PNGs
+# ─────────────────────────────────────────────
 
-    x_min, y_min, x_max, y_max = bbox
-    crop     = image[y_min:y_max, x_min:x_max, :]
+def _save_pair_crops(args):
+    """
+    Worker function: processes one image pair and saves crops as PNGs.
+    Returns list of (png_path, label) tuples.
+    """
+    pre_path, post_path, label_path, out_dir, pair_idx = args
+    results = []
+    errors  = 0
 
-    # Scale each band
-    def scale_band(band):
-        p2, p98 = np.percentile(band, 2), np.percentile(band, 98)
-        if p98 == p2:
-            return np.zeros_like(band, dtype=np.float32)
-        return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
+    try:
+        pre_img  = _load_image(pre_path)
+        post_img = _load_image(post_path)
+        h, w = pre_img.shape[:2]
+        buildings = load_json_buildings(label_path)
 
-    rgb = np.stack([scale_band(crop[:,:,0]), scale_band(crop[:,:,1]), scale_band(crop[:,:,2])], axis=-1)
+        for b_idx, building in enumerate(buildings):
+            damage = building["damage"]
+            label  = DAMAGE_TO_BINARY.get(damage, None)
+            if label is None:
+                continue
 
-    pil_crop = Image.fromarray((rgb * 255).astype(np.uint8)).resize(target_size, Image.Resampling.LANCZOS)
-    return np.array(pil_crop)
+            bbox = _polygon_to_bbox(building["polygon"], w, h)
+            if bbox is None:
+                continue
 
+            pre_crop  = _crop_and_scale(pre_img,  bbox)
+            post_crop = _crop_and_scale(post_img, bbox)
+
+            # Stack pre+post horizontally into a single 128×256 PNG
+            # This avoids storing two files per building
+            combined = np.concatenate([pre_crop, post_crop], axis=1)  # (128, 256, 3)
+
+            label_dir = Path(out_dir) / str(label)
+            label_dir.mkdir(parents=True, exist_ok=True)
+
+            fname = f"{pair_idx:06d}_{b_idx:04d}.png"
+            fpath = label_dir / fname
+            Image.fromarray(combined).save(fpath)
+            results.append((str(fpath), label))
+
+    except Exception as e:
+        errors = 1
+
+    return results, errors
 
 
 # ─────────────────────────────────────────────
-# 3. TRAITEMENT D'UNE PAIRE D'IMAGES
+# 4. SCAN DES PAIRES D'IMAGES
 # ─────────────────────────────────────────────
 
-def process_image_pair(
-    pre_path: str,
-    post_path: str,
-    label_post_path: str,
-) -> List[Tuple[np.ndarray, np.ndarray, int]]:
-
-    def _load_image(path: str) -> np.ndarray:
-        """Loads PNG or TIFF as RGB uint8."""
-        p = Path(path)
-        if p.suffix.lower() in ['.tif', '.tiff']:
-            with rasterio.open(path) as src:
-                data = src.read()
-                rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
-                img = rgb.transpose(1, 2, 0)
-                return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
-        return np.array(Image.open(path).convert("RGB"))
-
-    pre_img = _load_image(pre_path)
-    post_img = _load_image(post_path)
-    h, w = pre_img.shape[:2]
-
-    buildings = load_json_buildings(label_post_path)
-    samples = []
-
-    for building in buildings:
-        damage = building["damage"]
-        label = DAMAGE_TO_BINARY.get(damage, None)
-        if label is None:
-            continue
-        bbox = polygon_to_pixel_bbox(building["polygon"], w, h)
-        if bbox is None:
-            continue
-        pre_crop = crop_building(pre_img, bbox)
-        post_crop = crop_building(post_img, bbox)
-        samples.append((pre_crop, post_crop, label))
-
-    return samples
-
-
-
-# ─────────────────────────────────────────────
-# 4. SCAN DES PAIRES D'IMAGES xView2
-# ─────────────────────────────────────────────
-
-def find_image_pairs(
-    xview2_root: str
-) -> List[Dict[str, str]]:
+def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
     pairs = []
-    root = Path(xview2_root)
+    root  = Path(xview2_root)
 
-    # Recursively find all directories named "images" under root
     images_dirs = list(root.rglob("images"))
-
     if not images_dirs:
         print(f"[WARN] Aucun dossier 'images' trouvé sous : {root}")
         return pairs
 
     for img_dir in images_dirs:
-        # Assume "labels" is a sibling directory to "images"
         label_dir = img_dir.parent / "labels"
-
-        if not label_dir.exists() or not label_dir.is_dir():
-            print(f"[WARN] Dossier 'labels' manquant ou invalide pour : {img_dir}")
+        if not label_dir.exists():
             continue
 
-        # Chercher les fichiers post_disaster en PNG ou TIFF dans ce dossier images
         post_images = sorted(
             list(img_dir.glob("*_post_disaster.png")) +
             list(img_dir.glob("*_post_disaster.tif")) +
@@ -202,169 +177,225 @@ def find_image_pairs(
         )
 
         for post_img_path in post_images:
-            stem = post_img_path.stem   # ex: hurricane-florence_00000001_post_disaster
-            ext = post_img_path.suffix  # ex: .png ou .tif ou .tiff
-
-            pre_stem = stem.replace("_post_disaster", "_pre_disaster")
-            pre_img_path = img_dir / f"{pre_stem}{ext}"
+            stem = post_img_path.stem
+            ext  = post_img_path.suffix
+            pre_stem       = stem.replace("_post_disaster", "_pre_disaster")
+            pre_img_path   = img_dir / f"{pre_stem}{ext}"
             post_label_path = label_dir / f"{stem}.json"
 
-            if not pre_img_path.exists():
-                print(f"[WARN] Fichier image 'pre_disaster' manquant ou invalide pour : {stem}")
-                continue
-            if not post_label_path.exists():
-                print(f"[WARN] Fichier 'label' manquant ou invalide pour : {stem}")
+            if not pre_img_path.exists() or not post_label_path.exists():
                 continue
 
-            # Nom de l'événement : tout sauf les deux derniers segments
-            # "hurricane-florence_00000001_post_disaster" → "hurricane-florence"
             event = "_".join(stem.split("_")[:-2])
-
             pairs.append({
-                "pre_img": str(pre_img_path),
-                "post_img": str(post_img_path),
+                "pre_img":    str(pre_img_path),
+                "post_img":   str(post_img_path),
                 "post_label": str(post_label_path),
-                "event": event,
+                "event":      event,
             })
 
-    print(f"[INFO] {len(pairs)} paires d'images trouvées dans tous les sous-dossiers")
+    print(f"[INFO] {len(pairs)} paires d'images trouvées")
     return pairs
 
 
 # ─────────────────────────────────────────────
-# 5. EXTRACTION DE TOUS LES SAMPLES
+# 5. SPLIT PAIRS BY EVENT (no leakage)
 # ─────────────────────────────────────────────
 
-def _process_pair(pair: Dict[str, str]) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int], int]:
-    """Worker function: processes a single image pair and returns its samples."""
-    try:
-        samples = process_image_pair(
-            pair["pre_img"], pair["post_img"], pair["post_label"]
-        )
-        image_pairs = [(pre_crop, post_crop) for pre_crop, post_crop, _ in samples]
-        labels = [label for _, _, label in samples]
-        return image_pairs, labels, 0
-    except Exception:
-        return [], [], 1
+def split_pairs_by_event(
+    pairs: List[Dict],
+    train_ratio: float = TRAIN_RATIO,
+    val_ratio:   float = VAL_RATIO,
+    seed:        int   = RANDOM_SEED,
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """
+    Split pairs into train/val/test by event name to prevent data leakage.
+    """
+    from collections import defaultdict
+    import random
+
+    event_pairs = defaultdict(list)
+    for p in pairs:
+        event_pairs[p["event"]].append(p)
+
+    events = list(event_pairs.keys())
+    random.seed(seed)
+    random.shuffle(events)
+
+    n = len(events)
+    n_train = max(1, int(n * train_ratio))
+    n_val   = max(1, int(n * val_ratio))
+
+    train_events = events[:n_train]
+    val_events   = events[n_train:n_train + n_val]
+    test_events  = events[n_train + n_val:]
+
+    train_pairs = [p for e in train_events for p in event_pairs[e]]
+    val_pairs   = [p for e in val_events   for p in event_pairs[e]]
+    test_pairs  = [p for e in test_events  for p in event_pairs[e]]
+
+    print(f"[INFO] Event split → Train: {len(train_pairs)} | Val: {len(val_pairs)} | Test: {len(test_pairs)} pairs")
+    return train_pairs, val_pairs, test_pairs
 
 
-def build_all_samples(
-    pairs: List[Dict[str, str]],
-    verbose: bool = True,
-    max_workers: int = None,
-) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[int]]:
+# ─────────────────────────────────────────────
+# 6. EXTRACT ALL CROPS TO DISK
+# ─────────────────────────────────────────────
 
-    image_pairs = []
-    labels = []
-    errors = 0
-    completed = 0
+def extract_crops_to_disk(
+    pairs:       List[Dict],
+    out_dir:     str,
+    split_name:  str,
+    max_workers: int = 8,
+    verbose:     bool = True,
+) -> Tuple[int, int]:
+    """
+    Extracts building crops from all pairs and saves as PNGs.
+    Folder structure:
+        out_dir/split_name/0/  ← undamaged
+        out_dir/split_name/1/  ← damaged
+
+    Returns (total_crops, total_errors)
+    """
+    split_dir = Path(out_dir) / split_name
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if already extracted
+    existing = list(split_dir.rglob("*.png"))
+    if existing:
+        print(f"[INFO] {split_name}: {len(existing)} crops already on disk, skipping extraction.")
+        return len(existing), 0
+
+    args_list = [
+        (p["pre_img"], p["post_img"], p["post_label"], str(split_dir), idx)
+        for idx, p in enumerate(pairs)
+    ]
+
+    total_crops  = 0
+    total_errors = 0
+    completed    = 0
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_pair = {executor.submit(_process_pair, pair): pair for pair in pairs}
+        futures = {executor.submit(_save_pair_crops, args): args for args in args_list}
 
-        for future in as_completed(future_to_pair):
-            pair_image_pairs, pair_labels, pair_errors = future.result()
-            image_pairs.extend(pair_image_pairs)
-            labels.extend(pair_labels)
-            errors += pair_errors
+        for future in as_completed(futures):
+            results, errors = future.result()
+            total_crops  += len(results)
+            total_errors += errors
+            completed    += 1
 
-            completed += 1
-            if verbose and completed % 10 == 0:
-                pair = future_to_pair[future]
-                print(f"Processed {completed}/{len(pairs)}: {pair['event']}")
+            if verbose and completed % 50 == 0:
+                print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
-    if verbose:
-        dist = Counter(labels)
-        total = len(labels)
-        print(f"Samples: {total}, Errors: {errors}, Undamaged: {dist.get(0, 0)}, Damaged: {dist.get(1, 0)}")
+    # Count per class
+    n0 = len(list((split_dir / "0").glob("*.png"))) if (split_dir / "0").exists() else 0
+    n1 = len(list((split_dir / "1").glob("*.png"))) if (split_dir / "1").exists() else 0
+    print(f"  [{split_name}] Done: {total_crops} crops — Undamaged: {n0} | Damaged: {n1} | Errors: {total_errors}")
 
-    return image_pairs, labels
+    return total_crops, total_errors
 
 
 # ─────────────────────────────────────────────
-# 6. SPLIT TRAIN / VAL / TEST
+# 7. BUILD LAZY tf.data.Dataset FROM DISK
 # ─────────────────────────────────────────────
 
-def split_samples(
-    samples: List[Tuple[np.ndarray, np.ndarray]],  # List of (pre_crop, post_crop)
-    labels: List[int],
-    train_ratio: float = TRAIN_RATIO,
-    val_ratio: float = VAL_RATIO,
-    seed: int = RANDOM_SEED
-) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[int], List[int], List[int]]:
-    """
-    Stratified split of samples (crops) into train, val, test sets.
-    Preserves label distribution using stratification.
+def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
+    """Load a saved combined (128×256) PNG and split back into pre+post, then stack as 6-channel."""
+    img = tf.io.read_file(path)
+    img = tf.image.decode_png(img, channels=3)
+    img = tf.cast(img, tf.float32) / 255.0           # normalize to [0,1]
 
-    Args:
-        samples: List of (pre_crop, post_crop) tuples.
-        labels: Corresponding list of labels.
-        train_ratio: Fraction for train.
-        val_ratio: Fraction for val.
-        seed: Random seed for reproducibility.
+    # Split horizontally: left=pre, right=post
+    pre  = img[:, :CROP_SIZE[1], :]                  # (128, 128, 3)
+    post = img[:, CROP_SIZE[1]:, :]                  # (128, 128, 3)
 
-    Returns:
-        train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
-    """
-    from sklearn.model_selection import train_test_split
-
-    # First split: train + (val + test)
-    train_samples, temp_samples, train_labels, temp_labels = train_test_split(
-        samples, labels,
-        test_size=(1 - train_ratio),
-        stratify=labels,
-        random_state=seed
-    )
-
-    # Second split: val and test from the remainder
-    val_ratio_adjusted = val_ratio / (val_ratio + (1 - train_ratio - val_ratio))  # Normalize val_ratio for the temp set
-    val_samples, test_samples, val_labels, test_labels = train_test_split(
-        temp_samples, temp_labels,
-        test_size=(1 - val_ratio_adjusted),
-        stratify=temp_labels,
-        random_state=seed
-    )
-
-    print(f"\n[INFO] Stratified Split (Crop-Level):")
-    print(f"  Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
-    print(f"  Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
-    print(f"  Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
-
-    return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
+    combined = tf.concat([pre, post], axis=-1)        # (128, 128, 6)
+    combined = tf.image.resize(combined, CROP_SIZE)
+    return combined, tf.cast(label, tf.float32)
 
 
-# ─────────────────────────────────────────────
-# 7. PRÉPROCESSING & DATA PIPELINE
-# ─────────────────────────────────────────────
-
-def preprocess_pair(pre_image, post_image, label):
-    """Concatenates and normalizes pre/post images."""
-    pre = tf.cast(pre_image, tf.float32) / 255.0
-    post = tf.cast(post_image, tf.float32) / 255.0
-    pre = tf.image.resize(pre, CROP_SIZE)
-    post = tf.image.resize(post, CROP_SIZE)
-    combined = tf.concat([pre, post], axis=-1)
-    return combined, label
-
-def augment(image, label):
-    """Applies basic augmentations."""
+def _augment(image: tf.Tensor, label: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     image = tf.image.random_flip_left_right(image)
     k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
     image = tf.image.rot90(image, k)
     image = tf.image.random_brightness(image, max_delta=0.1)
     image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
+    image = tf.clip_by_value(image, 0.0, 1.0)
     return image, label
 
-def build_dataset(image_pairs, labels, training=False, batch_size=32):
 
-    pre_images = np.array([p[0] for p in image_pairs])
-    post_images = np.array([p[1] for p in image_pairs])
-    labels_arr = np.array(labels, dtype=np.float32)
+def build_dataset_from_dir(
+    split_dir:  str,
+    training:   bool  = False,
+    batch_size: int   = BATCH_SIZE,
+) -> tf.data.Dataset:
+    """
+    Builds a lazy tf.data.Dataset by reading PNG paths from disk.
+    Never loads all images into memory at once.
+    """
+    split_path = Path(split_dir)
+    paths, labels = [], []
 
-    ds = tf.data.Dataset.from_tensor_slices(((pre_images, post_images), labels_arr))
-    ds = ds.map(lambda imgs, lbl: preprocess_pair(imgs[0], imgs[1], lbl), num_parallel_calls=tf.data.AUTOTUNE)
+    for label in [0, 1]:
+        label_dir = split_path / str(label)
+        if not label_dir.exists():
+            continue
+        for png in label_dir.glob("*.png"):
+            paths.append(str(png))
+            labels.append(label)
+
+    if not paths:
+        raise FileNotFoundError(f"No crops found in {split_dir}")
+
+    print(f"[INFO] {split_path.name}: {len(paths)} crops — "
+          f"Undamaged: {labels.count(0)} | Damaged: {labels.count(1)}")
+
+    ds = tf.data.Dataset.from_tensor_slices((paths, labels))
+
     if training:
-        # ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.shuffle(1000)
+        ds = ds.shuffle(buffer_size=min(len(paths), 10000), seed=RANDOM_SEED)
+
+    ds = ds.map(
+        lambda p, l: tf.py_function(
+            func=lambda p, l: _parse_image(p.numpy().decode(), int(l.numpy())),
+            inp=[p, l],
+            Tout=[tf.float32, tf.float32]
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+    # Set shapes explicitly (needed after py_function)
+    ds = ds.map(
+        lambda img, lbl: (
+            tf.ensure_shape(img, (*CROP_SIZE, 6)),
+            tf.ensure_shape(lbl, ())
+        )
+    )
+
+    if training:
+        ds = ds.map(_augment, num_parallel_calls=tf.data.AUTOTUNE)
+
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     return ds
+
+
+# ─────────────────────────────────────────────
+# 8. CLASS WEIGHTS
+# ─────────────────────────────────────────────
+
+def compute_class_weights_from_dir(split_dir: str) -> Dict[int, float]:
+    from sklearn.utils.class_weight import compute_class_weight
+    split_path = Path(split_dir)
+    labels = []
+    for label in [0, 1]:
+        label_dir = split_path / str(label)
+        if label_dir.exists():
+            n = len(list(label_dir.glob("*.png")))
+            labels.extend([label] * n)
+
+    weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.array([0, 1]),
+        y=np.array(labels)
+    )
+    return {0: float(weights[0]), 1: float(weights[1])}
