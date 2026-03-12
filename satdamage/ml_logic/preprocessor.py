@@ -209,13 +209,10 @@ def find_image_pairs(
             post_label_path = label_dir / f"{stem}.json"
 
             if not pre_img_path.exists():
-                print(f"[WARN] Image pré-disaster manquante : {pre_img_path}")
-                continue
-            if not post_img_path.exists():
-                print(f"[WARN] Image post-disaster manquante : {post_img_path}")
+                print(f"[WARN] Fichier image 'pre_disaster' manquant ou invalide pour : {stem}")
                 continue
             if not post_label_path.exists():
-                print(f"[WARN] Annotation JSON manquante : {post_label_path}")
+                print(f"[WARN] Fichier 'label' manquant ou invalide pour : {stem}")
                 continue
 
             # Nom de l'événement : tout sauf les deux derniers segments
