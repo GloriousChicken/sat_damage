@@ -355,7 +355,46 @@ def augment(image, label):
     image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
     return image, label
 
-def build_dataset(image_pairs, labels, training=False, batch_size=32):
+
+def balance_dataset(image_pairs, labels, majority_ratio=2):
+    """Balances the dataset by oversampling the minority class and undersampling the majority class."""
+    from imblearn.over_sampling import RandomOverSampler
+    from imblearn.under_sampling import RandomUnderSampler
+
+    # Reshape image_pairs into a 2D array for imblearn
+    X = np.array([np.concatenate([p[0].flatten(), p[1].flatten()]) for p in image_pairs])
+    y = np.array(labels)
+    class_counts = Counter(y)
+    print(f"Before balancing: {class_counts}")
+    majority_class = class_counts.most_common(1)[0][0]
+    # Minority classes: all other classes except the majority
+    minority_classes = class_counts.keys() - {majority_class}
+
+    # Oversample minority class
+    strategy_oversampling = {cls: min(class_counts[cls]*2, class_counts[majority_class]) for cls in minority_classes}
+    ros = RandomOverSampler(sampling_strategy=strategy_oversampling, random_state=RANDOM_SEED)
+    X_ros, y_ros = ros.fit_resample(X, y)
+
+    # Undersample majority class
+    strategy_undersampling = {majority_class: int(sum(strategy_oversampling.values())*majority_ratio)}
+    rus = RandomUnderSampler(sampling_strategy=strategy_undersampling, random_state=RANDOM_SEED)
+    X_balanced, y_balanced = rus.fit_resample(X_ros, y_ros)
+
+    # Reconstruct image pairs from flattened arrays
+    crop_size = image_pairs[0][0].shape
+    flat_size = np.prod(crop_size)
+    balanced_pairs = [(X_balanced[i, :flat_size].reshape(crop_size), X_balanced[i, flat_size:].reshape(crop_size)) for i in range(len(X_balanced))]
+    balanced_labels = list(y_balanced)
+    print(f"After balancing: {Counter(balanced_labels)}")
+    return balanced_pairs, balanced_labels
+
+
+def build_dataset(image_pairs, labels, training=False, batch_size=32, balance=True, majority_ratio=2.0):
+
+    if training and balance:
+        # Balance the dataset by oversampling the minority class and undersampling the majority class.
+        # This should work for multiple classes, but here we only have 2.
+        image_pairs, labels = balance_dataset(image_pairs, labels, majority_ratio=majority_ratio)
 
     pre_images = np.array([p[0] for p in image_pairs])
     post_images = np.array([p[1] for p in image_pairs])
@@ -366,5 +405,6 @@ def build_dataset(image_pairs, labels, training=False, batch_size=32):
     if training:
         # ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(1000)
+
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     return ds
