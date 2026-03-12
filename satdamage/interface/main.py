@@ -28,16 +28,9 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     Full pipeline:
         1. Scan image pairs
         2. Split by event (no leakage)
-        3. Extract crops to disk (skips if already done)
+        3. Extract crops to disk (idempotent — skips if already done)
         4. Compute class weights from disk
         5. Build lazy tf.data.Dataset
-
-    Args:
-        xview2_root: Path to xView2 data directory
-        crops_dir:   Path where crops will be saved
-
-    Returns:
-        train_ds, val_ds, test_ds, class_weights
     """
     print("=" * 55)
     print("  SatDamage — xView2 Dataset Builder (Lazy)")
@@ -47,13 +40,13 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     print("\n[1/5] Scan des paires d'images...")
     all_pairs = find_image_pairs(xview2_root)
     if not all_pairs:
-        raise FileNotFoundError(f"Aucune paire trouvée dans {xview2_root}.")
+        raise FileNotFoundError(f"Aucune paire trouvee dans {xview2_root}.")
 
     # ── 2. Split by event
-    print("\n[2/5] Split par événement (sans data leakage)...")
+    print("\n[2/5] Split par evenement (sans data leakage)...")
     train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs)
 
-    # ── 3. Extract crops to disk (idempotent — skips if already done)
+    # ── 3. Extract crops to disk
     print("\n[3/5] Extraction des crops vers le disque...")
     extract_crops_to_disk(train_pairs, crops_dir, "train", max_workers=MAX_WORKERS)
     extract_crops_to_disk(val_pairs,   crops_dir, "val",   max_workers=MAX_WORKERS)
@@ -72,14 +65,14 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     test_ds  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
 
     print("\n" + "=" * 55)
-    print("  Datasets prêts (chargement lazy depuis disque)")
+    print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
 
     return train_ds, val_ds, test_ds, class_weights
 
 
 # ─────────────────────────────────────────────
-# POINT D'ENTRÉE
+# POINT D'ENTREE
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":

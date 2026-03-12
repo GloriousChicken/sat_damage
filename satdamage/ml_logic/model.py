@@ -116,16 +116,18 @@ def build_damage_cnn(input_shape=(128, 128, 6)):
 
 def compile_model(model):
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(
+        optimizer=tf.keras.optimizers.AdamW(
             learning_rate=LEARNING_RATE
         ),
-        loss=tf.keras.losses.BinaryCrossentropy(),
+        # loss=tf.keras.losses.BinaryCrossentropy(),
+        loss = tf.keras.losses.BinaryFocalCrossentropy(gamma=1.0),  # Focal Loss pour mieux gérer le déséquilibre
         metrics=[
             tf.keras.metrics.BinaryAccuracy(name="accuracy"),
             tf.keras.metrics.Precision(name="precision"),
             tf.keras.metrics.Recall(name="recall"),
             tf.keras.metrics.AUC(name="auc"),
-        ]
+            tf.keras.metrics.F1Score(name="f1", threshold=0.5, average="micro")
+            ]
     )
     return model
 
@@ -137,17 +139,17 @@ def get_callbacks():
     return [
         # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
-            monitor="val_auc",
+            monitor="val_loss",
             patience=8,
             restore_best_weights=True,
-            mode="max",
+            mode="min",
             verbose=1
         ),
         # Réduction du LR si plateau
         ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,
-            patience=4,
+            patience=5,
             min_lr=1e-6,
             verbose=1
         ),

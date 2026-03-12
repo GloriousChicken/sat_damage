@@ -14,11 +14,12 @@ from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 """
-Refactored preprocessor: saves crops to disk instead of loading all into RAM.
+Merged preprocessor: lazy disk-based pipeline (no OOM) + team augmentation improvements.
 Pipeline:
-    1. find_image_pairs()      → list of (pre, post, label) paths
-    2. extract_crops_to_disk() → saves PNGs to CROPS_DIR/{train,val,test}/{0,1}/
-    3. build_dataset_from_dir()→ lazy tf.data.Dataset via image_dataset_from_directory
+    1. find_image_pairs()       → list of (pre, post, label) paths
+    2. split_pairs_by_event()   → train/val/test split by disaster event (no leakage)
+    3. extract_crops_to_disk()  → saves PNGs to CROPS_DIR/{train,val,test}/{0,1}/
+    4. build_dataset_from_dir() → lazy tf.data.Dataset, loads batch by batch from disk
 """
 
 
@@ -134,8 +135,7 @@ def _save_pair_crops(args):
             pre_crop  = _crop_and_scale(pre_img,  bbox)
             post_crop = _crop_and_scale(post_img, bbox)
 
-            # Stack pre+post horizontally into a single 128×256 PNG
-            # This avoids storing two files per building
+            # Stack pre+post horizontally into a single 128x256 PNG
             combined = np.concatenate([pre_crop, post_crop], axis=1)  # (128, 256, 3)
 
             label_dir = Path(out_dir) / str(label)
@@ -162,7 +162,7 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
 
     images_dirs = list(root.rglob("images"))
     if not images_dirs:
-        print(f"[WARN] Aucun dossier 'images' trouvé sous : {root}")
+        print(f"[WARN] Aucun dossier 'images' trouve sous : {root}")
         return pairs
 
     for img_dir in images_dirs:
@@ -179,8 +179,8 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
         for post_img_path in post_images:
             stem = post_img_path.stem
             ext  = post_img_path.suffix
-            pre_stem       = stem.replace("_post_disaster", "_pre_disaster")
-            pre_img_path   = img_dir / f"{pre_stem}{ext}"
+            pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
+            pre_img_path    = img_dir / f"{pre_stem}{ext}"
             post_label_path = label_dir / f"{stem}.json"
 
             if not pre_img_path.exists() or not post_label_path.exists():
@@ -194,7 +194,7 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
                 "event":      event,
             })
 
-    print(f"[INFO] {len(pairs)} paires d'images trouvées")
+    print(f"[INFO] {len(pairs)} paires d'images trouvees")
     return pairs
 
 
@@ -208,9 +208,6 @@ def split_pairs_by_event(
     val_ratio:   float = VAL_RATIO,
     seed:        int   = RANDOM_SEED,
 ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    """
-    Split pairs into train/val/test by event name to prevent data leakage.
-    """
     from collections import defaultdict
     import random
 
@@ -234,7 +231,7 @@ def split_pairs_by_event(
     val_pairs   = [p for e in val_events   for p in event_pairs[e]]
     test_pairs  = [p for e in test_events  for p in event_pairs[e]]
 
-    print(f"[INFO] Event split → Train: {len(train_pairs)} | Val: {len(val_pairs)} | Test: {len(test_pairs)} pairs")
+    print(f"[INFO] Event split -> Train: {len(train_pairs)} | Val: {len(val_pairs)} | Test: {len(test_pairs)} pairs")
     return train_pairs, val_pairs, test_pairs
 
 
@@ -250,17 +247,12 @@ def extract_crops_to_disk(
     verbose:     bool = True,
 ) -> Tuple[int, int]:
     """
-    Extracts building crops from all pairs and saves as PNGs.
-    Folder structure:
-        out_dir/split_name/0/  ← undamaged
-        out_dir/split_name/1/  ← damaged
-
-    Returns (total_crops, total_errors)
+    Saves building crops as PNGs to out_dir/split_name/{0,1}/.
+    Idempotent — skips if crops already exist.
     """
     split_dir = Path(out_dir) / split_name
     split_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if already extracted
     existing = list(split_dir.rglob("*.png"))
     if existing:
         print(f"[INFO] {split_name}: {len(existing)} crops already on disk, skipping extraction.")
@@ -287,7 +279,6 @@ def extract_crops_to_disk(
             if verbose and completed % 50 == 0:
                 print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
-    # Count per class
     n0 = len(list((split_dir / "0").glob("*.png"))) if (split_dir / "0").exists() else 0
     n1 = len(list((split_dir / "1").glob("*.png"))) if (split_dir / "1").exists() else 0
     print(f"  [{split_name}] Done: {total_crops} crops — Undamaged: {n0} | Damaged: {n1} | Errors: {total_errors}")
@@ -296,41 +287,46 @@ def extract_crops_to_disk(
 
 
 # ─────────────────────────────────────────────
-# 7. BUILD LAZY tf.data.Dataset FROM DISK
+# 7. AUGMENTATION (team improvements merged)
 # ─────────────────────────────────────────────
-
-def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
-    """Load a saved combined (128×256) PNG and split back into pre+post, then stack as 6-channel."""
-    img = tf.io.read_file(path)
-    img = tf.image.decode_png(img, channels=3)
-    img = tf.cast(img, tf.float32) / 255.0           # normalize to [0,1]
-
-    # Split horizontally: left=pre, right=post
-    pre  = img[:, :CROP_SIZE[1], :]                  # (128, 128, 3)
-    post = img[:, CROP_SIZE[1]:, :]                  # (128, 128, 3)
-
-    combined = tf.concat([pre, post], axis=-1)        # (128, 128, 6)
-    combined = tf.image.resize(combined, CROP_SIZE)
-    return combined, tf.cast(label, tf.float32)
-
 
 def _augment(image: tf.Tensor, label: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     image = tf.image.random_flip_left_right(image)
+    image = tf.image.random_flip_up_down(image)
     k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
     image = tf.image.rot90(image, k)
     image = tf.image.random_brightness(image, max_delta=0.1)
+    image = tf.clip_by_value(image, 0.0, 1.0)
     image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
     image = tf.clip_by_value(image, 0.0, 1.0)
     return image, label
 
 
+# ─────────────────────────────────────────────
+# 8. BUILD LAZY tf.data.Dataset FROM DISK
+# ─────────────────────────────────────────────
+
+def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
+    """Load a saved combined (128x256) PNG and split back into pre+post as 6-channel."""
+    img = tf.io.read_file(path)
+    img = tf.image.decode_png(img, channels=3)
+    img = tf.cast(img, tf.float32) / 255.0
+
+    pre  = img[:, :CROP_SIZE[1], :]   # (128, 128, 3)
+    post = img[:, CROP_SIZE[1]:, :]   # (128, 128, 3)
+
+    combined = tf.concat([pre, post], axis=-1)  # (128, 128, 6)
+    combined = tf.image.resize(combined, CROP_SIZE)
+    return combined, tf.cast(label, tf.float32)
+
+
 def build_dataset_from_dir(
     split_dir:  str,
-    training:   bool  = False,
-    batch_size: int   = BATCH_SIZE,
+    training:   bool = False,
+    batch_size: int  = BATCH_SIZE,
 ) -> tf.data.Dataset:
     """
-    Builds a lazy tf.data.Dataset by reading PNG paths from disk.
+    Builds a lazy tf.data.Dataset from PNG paths on disk.
     Never loads all images into memory at once.
     """
     split_path = Path(split_dir)
@@ -364,7 +360,6 @@ def build_dataset_from_dir(
         num_parallel_calls=tf.data.AUTOTUNE
     )
 
-    # Set shapes explicitly (needed after py_function)
     ds = ds.map(
         lambda img, lbl: (
             tf.ensure_shape(img, (*CROP_SIZE, 6)),
@@ -380,7 +375,7 @@ def build_dataset_from_dir(
 
 
 # ─────────────────────────────────────────────
-# 8. CLASS WEIGHTS
+# 9. CLASS WEIGHTS
 # ─────────────────────────────────────────────
 
 def compute_class_weights_from_dir(split_dir: str) -> Dict[int, float]:
