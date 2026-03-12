@@ -54,6 +54,9 @@ PREFECT_LOG_LEVEL = os.environ.get("PREFECT_LOG_LEVEL")
 GAR_IMAGE = os.environ.get("GAR_IMAGE")
 GAR_MEMORY = os.environ.get("GAR_MEMORY")
 
+##################  CONSTANTS  #####################
+LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "training_outputs")
+
 ##################  VALIDATIONS  ################
 
 env_valid_options = dict(
