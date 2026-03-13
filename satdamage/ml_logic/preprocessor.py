@@ -343,13 +343,24 @@ def build_dataset_from_dir(
     if not paths:
         raise FileNotFoundError(f"No crops found in {split_dir}")
 
-    print(f"[INFO] {split_path.name}: {len(paths)} crops — "
-          f"Undamaged: {labels.count(0)} | Damaged: {labels.count(1)}")
-
-    ds = tf.data.Dataset.from_tensor_slices((paths, labels))
+    n0, n1 = labels.count(0), labels.count(1)
+    print(f"[INFO] {split_path.name}: {len(paths)} crops — Undamaged: {n0} | Damaged: {n1}")
 
     if training:
-        ds = ds.shuffle(buffer_size=min(len(paths), 10000), seed=RANDOM_SEED)
+        # Balanced sampling: draw 50/50 from each class to counteract 8:1 imbalance.
+        # Val/test datasets keep the real distribution so val_f1 reflects true performance.
+        paths0  = [p for p, l in zip(paths, labels) if l == 0]
+        paths1  = [p for p, l in zip(paths, labels) if l == 1]
+        labels0 = [0] * len(paths0)
+        labels1 = [1] * len(paths1)
+
+        ds0 = tf.data.Dataset.from_tensor_slices((paths0, labels0)) \
+                .shuffle(len(paths0), seed=RANDOM_SEED).repeat()
+        ds1 = tf.data.Dataset.from_tensor_slices((paths1, labels1)) \
+                .shuffle(len(paths1), seed=RANDOM_SEED).repeat()
+        ds  = tf.data.Dataset.sample_from_datasets([ds0, ds1], weights=[0.5, 0.5], seed=RANDOM_SEED)
+    else:
+        ds = tf.data.Dataset.from_tensor_slices((paths, labels))
 
     ds = ds.map(
         lambda p, l: tf.py_function(

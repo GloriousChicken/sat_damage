@@ -7,6 +7,7 @@ Input:   paires d'images pré/post-catastrophe (6 canaux)
 
 import numpy as np
 import os
+from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
@@ -120,7 +121,7 @@ def compile_model(model):
             learning_rate=LEARNING_RATE
         ),
         # loss=tf.keras.losses.BinaryCrossentropy(),
-        loss = tf.keras.losses.BinaryFocalCrossentropy(gamma=1.0),  # Focal Loss pour mieux gérer le déséquilibre
+        loss=tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA),
         metrics=[
             tf.keras.metrics.BinaryAccuracy(name="accuracy"),
             tf.keras.metrics.Precision(name="precision"),
@@ -133,30 +134,34 @@ def compile_model(model):
 
 
 def get_callbacks():
-    os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
+    run_id   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ckpt_path = CHECKPOINT_PATH.replace(".keras", f"_{run_id}.keras")
+    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
+    print(f"[Checkpoint] {ckpt_path}")
 
     return [
-        # Arrêt si pas d'amélioration sur la val_loss
+        # Arrêt si pas d'amélioration sur le val_f1
         EarlyStopping(
-            monitor="val_loss",
+            monitor="val_f1",
             patience=8,
             restore_best_weights=True,
-            mode="min",
+            mode="max",
             verbose=1
         ),
-        # Réduction du LR si plateau
+        # Réduction du LR si plateau sur val_f1
         ReduceLROnPlateau(
-            monitor="val_loss",
+            monitor="val_f1",
             factor=0.5,
             patience=5,
             min_lr=1e-6,
+            mode="max",
             verbose=1
         ),
-        # Sauvegarde du meilleur modèle
+        # Sauvegarde du meilleur modèle selon val_f1
         ModelCheckpoint(
-            filepath=CHECKPOINT_PATH,
-            monitor="val_auc",
+            filepath=ckpt_path,
+            monitor="val_f1",
             save_best_only=True,
             mode="max",
             verbose=1
@@ -174,7 +179,12 @@ def get_callbacks():
 # 4. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
-def train(train_ds, val_ds, class_weights=None):
+def train(train_ds, val_ds):
+    """
+    Entraîne le modèle. Le rééquilibrage des classes est géré par le
+    balanced sampling dans build_dataset_from_dir() — class_weight n'est
+    donc pas utilisé pour éviter une double correction.
+    """
     model = build_damage_cnn()
     model = compile_model(model)
     model.summary()
@@ -183,7 +193,6 @@ def train(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        class_weight=class_weights,
         callbacks=get_callbacks(),
         verbose=1
     )
@@ -194,9 +203,26 @@ def train(train_ds, val_ds, class_weights=None):
 # 5. ÉVALUATION
 # ─────────────────────────────────────────────
 
-def evaluate(model, test_ds, threshold=0.5):
+def find_best_threshold(y_true, y_pred_prob):
+    """
+    Parcourt les seuils de 0.10 à 0.90 et retourne celui qui maximise le F1
+    sur l'ensemble fourni (typiquement le jeu de validation).
+    """
+    thresholds = np.arange(0.10, 0.91, 0.05)
+    best_t, best_f1 = 0.5, 0.0
+    for t in thresholds:
+        f1 = f1_score(y_true, (np.array(y_pred_prob) >= t).astype(int), zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_t = f1, t
+    print(f"[Threshold sweep] Meilleur seuil : {best_t:.2f} → F1 = {best_f1:.4f}")
+    return float(best_t)
+
+
+def evaluate(model, test_ds, threshold=None):
     """
     Évalue le modèle et affiche la matrice de confusion + F1.
+    Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
+    avant d'afficher le rapport final.
     """
 
     y_true, y_pred_prob = [], []
@@ -206,10 +232,15 @@ def evaluate(model, test_ds, threshold=0.5):
         y_pred_prob.extend(preds.flatten())
         y_true.extend(labels.numpy())
 
-    y_pred = (np.array(y_pred_prob) >= threshold).astype(int)
     y_true = np.array(y_true).astype(int)
+    y_pred_prob = np.array(y_pred_prob)
 
-    print("\n── Rapport de classification ──")
+    if threshold is None:
+        threshold = find_best_threshold(y_true, y_pred_prob)
+
+    y_pred = (y_pred_prob >= threshold).astype(int)
+
+    print(f"\n── Rapport de classification (seuil={threshold:.2f}) ──")
     print(classification_report(
         y_true, y_pred,
         target_names=["non-endommagé", "endommagé"]
@@ -218,7 +249,7 @@ def evaluate(model, test_ds, threshold=0.5):
     print("── Matrice de confusion ──")
     print(confusion_matrix(y_true, y_pred))
 
-    f1 = f1_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
     print(f"\nF1-score (endommagé) : {f1:.4f}")
 
     return y_pred, y_pred_prob

@@ -52,11 +52,12 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     extract_crops_to_disk(val_pairs,   crops_dir, "val",   max_workers=MAX_WORKERS)
     extract_crops_to_disk(test_pairs,  crops_dir, "test",  max_workers=MAX_WORKERS)
 
-    # ── 4. Class weights
-    print("\n[4/5] Calcul des class weights...")
+    # ── 4. Class weights (informatif uniquement — le rééquilibrage est fait
+    #       par balanced sampling dans build_dataset_from_dir)
+    print("\n[4/5] Distribution des classes (info)...")
     class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
-    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
-    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
+    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}  (sklearn balanced, pour info)")
+    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}  (balanced sampling actif)")
 
     # ── 5. Build lazy datasets
     print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
@@ -68,7 +69,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
 
-    return train_ds, val_ds, test_ds, class_weights
+    return train_ds, val_ds, test_ds
 
 
 # ─────────────────────────────────────────────
@@ -77,10 +78,10 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
 if __name__ == "__main__":
 
-    train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
+    train_ds, val_ds, test_ds = build_xview2_datasets(
         xview2_root=DATA_DIR,
         crops_dir=CROPS_DIR,
     )
 
-    model, history = train(train_ds, val_ds, class_weights=class_weights)
+    model, history = train(train_ds, val_ds)
     evaluate(model, test_ds)
