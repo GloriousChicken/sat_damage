@@ -1,5 +1,4 @@
 import os
-
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -31,7 +30,17 @@ WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
 # Model selection
+<<<<<<< HEAD
 MODEL_ARCHITECTURE = "dual"  # Options: "concat", "dual"
+=======
+MODEL_ARCHITECTURE = "concat"  # Options: "concat", "dual"
+
+# Sauvegarde
+CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
+CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
+>>>>>>> 5a1ecc8ebfdfd44eab87c39883faaac0fa435cdd
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
