@@ -165,28 +165,40 @@ def get_efficientnet_callbacks(phase: str = "warmup"):
     patience_lr = 3  if phase == "warmup" else 5
 
     return [
+        # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
-            monitor              = "val_auc_pr",
-            patience             = patience_es,
-            restore_best_weights = True,
-            mode                 = "max",
-            verbose              = 1
+            monitor="val_auc_pr",
+            mode="max",
+            min_delta=1e-3,
+            patience=12,
+            start_from_epoch=5,
+            restore_best_weights=True,
+            verbose=1
         ),
+        # Réduction du LR si plateau
         ReduceLROnPlateau(
-            monitor  = "val_loss",
-            factor   = 0.5,
-            patience = patience_lr,
-            min_lr   = 1e-7,
-            verbose  = 1
+            monitor="val_auc_pr",
+            mode="max",
+            factor=0.5,
+            patience=4,
+            min_delta=5e-4,
+            cooldown=1,
+            min_lr=1e-6,
+            verbose=1
         ),
+        # Sauvegarde du meilleur modèle
         ModelCheckpoint(
-            filepath       = ENetConfig.CHECKPOINT_PATH,
-            monitor        = "val_auc_pr",
-            save_best_only = True,
-            mode           = "max",
-            verbose        = 1
+            filepath=CHECKPOINT_PATH,
+            monitor="val_auc_pr",
+            mode="max",
+            save_best_only=True,
+            verbose=1
         ),
-        TensorBoard(log_dir=log_dir, histogram_freq=1),
+        # TensorBoard
+        TensorBoard(
+            log_dir=LOG_DIR,
+            histogram_freq=1
+        )
     ]
 
 # ─────────────────────────────────────────────
@@ -510,16 +522,21 @@ def get_callbacks():
         # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
             monitor="val_auc_pr",
-            patience=10,
-            restore_best_weights=True,
             mode="max",
+            min_delta=1e-3,
+            patience=12,
+            start_from_epoch=5,
+            restore_best_weights=True,
             verbose=1
         ),
         # Réduction du LR si plateau
         ReduceLROnPlateau(
-            monitor="val_loss",
+            monitor="val_auc_pr",
+            mode="max",
             factor=0.5,
-            patience=5,
+            patience=4,
+            min_delta=5e-4,
+            cooldown=1,
             min_lr=1e-6,
             verbose=1
         ),
@@ -527,15 +544,15 @@ def get_callbacks():
         ModelCheckpoint(
             filepath=CHECKPOINT_PATH,
             monitor="val_auc_pr",
-            save_best_only=True,
             mode="max",
+            save_best_only=True,
             verbose=1
         ),
         # TensorBoard
         TensorBoard(
             log_dir=LOG_DIR,
             histogram_freq=1
-        ),
+        )
     ]
 
 
