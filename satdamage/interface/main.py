@@ -5,7 +5,6 @@ from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, fin
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
 from satdamage.ml_logic.registry import *
-# from satdamage.ml_logic.model import train_efficientnet
 from google.cloud import storage
 import gc
 import tensorflow as tf
