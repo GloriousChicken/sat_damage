@@ -4,9 +4,18 @@ seaborn
 matplotlib
 scikit-learn
 scipy
-tensorflow==2.16.2
+tensorflow==2.17.1
 rasterio==1.4.4
 shapely==2.1.2
 google-cloud-storage==2.14.0
 google-api-core==2.8.2
 googleapis-common-protos==1.56.4
+imblearn
+# API
+fastapi         # API framework
+pytz            # time zone management
+uvicorn         # web server
+# tests
+httpx           # HTTP client
+pytest-asyncio  # asynchronous I/O support for pytest
+python-multipart

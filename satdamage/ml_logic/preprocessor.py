@@ -1,4 +1,5 @@
 import os
+from io import BytesIO
 import json
 import numpy as np
 import tensorflow as tf
@@ -12,6 +13,9 @@ from sklearn.model_selection import train_test_split
 from collections import Counter
 from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from google.cloud import storage
+from imblearn.over_sampling import RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
 
 """
 Merged preprocessor: lazy disk-based pipeline (no OOM) + team augmentation improvements.
@@ -23,13 +27,29 @@ Pipeline:
 """
 
 
+if MODEL_TARGET == "gcs":
+    CLIENT = storage.Client()
+    BUCKET = CLIENT.bucket(BUCKET_NAME)
+
+
 # ─────────────────────────────────────────────
 # 1. PARSING DES ANNOTATIONS JSON xView2
 # ─────────────────────────────────────────────
 
 def load_json_buildings(json_path: str) -> List[Dict]:
-    with open(json_path, "r") as f:
-        data = json.load(f)
+    """
+    Loads building annotations from a JSON file and returns a list of building dicts with 'polygon' and 'damage' keys.
+    Supports both local files and GCS paths based on MODEL_TARGET.
+    """
+    if MODEL_TARGET == "local":
+        with open(json_path, "r") as f:
+            data = json.load(f)
+    elif MODEL_TARGET == "gcs":
+        blob = BUCKET.blob(json_path)
+        data = json.loads(blob.download_as_text())
+    else:
+        print(f"[WARN] Unsupported MODEL_TARGET: {MODEL_TARGET}")
+        return []
 
     buildings = []
     features = data.get("features", {}).get("xy", [])
@@ -103,6 +123,38 @@ def _polygon_to_bbox(polygon, w, h, padding=CROP_PADDING):
     return x_min, y_min, x_max, y_max
 
 
+def polygon_to_pixel_bbox(polygon, image_width: int, image_height: int, padding: int = CROP_PADDING) -> Optional[Tuple[int, int, int, int]]:
+    """Convert a shapely polygon to a pixel bounding box with padding and clipping."""
+    minx, miny, maxx, maxy = polygon.bounds
+    x_min = max(0, int(minx) - padding)
+    y_min = max(0, int(miny) - padding)
+    x_max = min(image_width,  int(maxx) + padding)
+    y_max = min(image_height, int(maxy) + padding)
+    if (x_max - x_min) < 10 or (y_max - y_min) < 10:
+        return None
+    return x_min, y_min, x_max, y_max
+
+
+def crop_building(
+    image:       np.ndarray,
+    bbox:        Tuple[int, int, int, int],
+    target_size: Tuple[int, int] = CROP_SIZE
+) -> np.ndarray:
+    """Crop a building from the image using the bounding box and apply percentile-based normalization."""
+    x_min, y_min, x_max, y_max = bbox
+    crop = image[y_min:y_max, x_min:x_max, :]
+
+    def scale_band(band):
+        p2, p98 = np.percentile(band, 2), np.percentile(band, 98)
+        if p98 == p2:
+            return np.zeros_like(band, dtype=np.float32)
+        return np.clip((band.astype(np.float32) - p2) / (p98 - p2), 0, 1)
+
+    rgb = np.stack([scale_band(crop[:,:,0]), scale_band(crop[:,:,1]), scale_band(crop[:,:,2])], axis=-1)
+    pil_crop = Image.fromarray((rgb * 255).astype(np.uint8)).resize(target_size, Image.Resampling.LANCZOS)
+    return np.array(pil_crop)
+
+
 # ─────────────────────────────────────────────
 # 3. WORKER: PROCESS ONE PAIR → SAVE PNGs
 # ─────────────────────────────────────────────
@@ -156,7 +208,50 @@ def _save_pair_crops(args):
 # 4. SCAN DES PAIRES D'IMAGES
 # ─────────────────────────────────────────────
 
+def process_image_pair(
+    pre_path: str,
+    post_path: str,
+    label_pre_path: str,
+    label_post_path: str,
+) -> List[Tuple[np.ndarray, np.ndarray, int]]:
+    """
+    Processes a single image pair and its annotations to extract building crops and labels.
+    Returns a list of tuples: (pre_crop, post_crop, label) for each building.
+    Used by the in-memory pipeline (build_all_samples).
+    """
+    pre_img  = _load_image(pre_path)
+    post_img = _load_image(post_path)
+    h, w = pre_img.shape[:2]
+
+    buildings_pre  = load_json_buildings(label_pre_path)
+    buildings_post = load_json_buildings(label_post_path)
+    samples = []
+
+    for building_pre, building_post in zip(buildings_pre, buildings_post):
+        damage = building_post["damage"]
+        label  = DAMAGE_TO_BINARY.get(damage, None)
+        if label is None:
+            continue
+        bbox_pre  = polygon_to_pixel_bbox(building_pre["polygon"],  w, h)
+        bbox_post = polygon_to_pixel_bbox(building_post["polygon"], w, h)
+        if bbox_pre is None or bbox_post is None:
+            continue
+        pre_crop  = crop_building(pre_img,  bbox_pre)
+        post_crop = crop_building(post_img, bbox_post)
+        samples.append((pre_crop, post_crop, label))
+
+    return samples
+
+
+# ─────────────────────────────────────────────
+# 4-1. SCAN DES PAIRES D'IMAGES xView2 EN LOCAL
+# ─────────────────────────────────────────────
+
 def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
+    """
+    Scans the xView2 dataset directory to find all valid image pairs and their corresponding labels.
+    Returns a list of dicts with keys: 'pre_img', 'post_img', 'pre_label', 'post_label', 'event'.
+    """
     pairs = []
     root  = Path(xview2_root)
 
@@ -179,17 +274,27 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
         for post_img_path in post_images:
             stem = post_img_path.stem
             ext  = post_img_path.suffix
+
             pre_stem        = stem.replace("_post_disaster", "_pre_disaster")
             pre_img_path    = img_dir / f"{pre_stem}{ext}"
+            pre_label_path  = label_dir / f"{pre_stem}.json"
             post_label_path = label_dir / f"{stem}.json"
 
-            if not pre_img_path.exists() or not post_label_path.exists():
+            if not pre_img_path.exists():
+                print(f"[WARN] Image pre_disaster manquante : {stem}")
+                continue
+            if not pre_label_path.exists():
+                print(f"[WARN] Label pre_disaster manquant : {pre_stem}")
+                continue
+            if not post_label_path.exists():
+                print(f"[WARN] Label post_disaster manquant : {stem}")
                 continue
 
             event = "_".join(stem.split("_")[:-2])
             pairs.append({
                 "pre_img":    str(pre_img_path),
                 "post_img":   str(post_img_path),
+                "pre_label":  str(pre_label_path),
                 "post_label": str(post_label_path),
                 "event":      event,
             })
@@ -236,7 +341,69 @@ def split_pairs_by_event(
 
 
 # ─────────────────────────────────────────────
-# 6. EXTRACT ALL CROPS TO DISK
+# 4-2. SCAN DES PAIRES D'IMAGES xView2 SUR GCS
+# ─────────────────────────────────────────────
+
+def find_image_pairs_gcs(prefix: str = "") -> List[Dict[str, str]]:
+    """
+    Scans the xView2 dataset on a GCS bucket to find all valid image pairs and labels.
+    Returns a list of dicts with keys: 'pre_img', 'post_img', 'pre_label', 'post_label', 'event'.
+    """
+    pairs = []
+
+    all_blobs = set(
+        blob.name for blob in CLIENT.list_blobs(BUCKET_NAME, prefix=prefix)
+    )
+
+    if not all_blobs:
+        print(f"[WARN] Aucun fichier trouvé sous gs://{BUCKET_NAME}/{prefix}")
+        return pairs
+
+    post_blobs = sorted([
+        b for b in all_blobs
+        if "_post_disaster" in b and b.endswith((".png", ".tif", ".tiff"))
+        and "/images/" in b
+    ])
+
+    for post_img_blob_name in post_blobs:
+        parts = post_img_blob_name.rsplit("/", 1)
+        img_dir_prefix = parts[0]
+        filename = parts[1]
+
+        stem, ext = filename.rsplit(".", 1)
+        ext = f".{ext}"
+
+        pre_stem             = stem.replace("_post_disaster", "_pre_disaster")
+        label_dir_prefix     = img_dir_prefix.replace("/images", "/labels")
+        pre_img_blob_name    = f"{img_dir_prefix}/{pre_stem}{ext}"
+        pre_label_blob_name  = f"{label_dir_prefix}/{pre_stem}.json"
+        post_label_blob_name = f"{label_dir_prefix}/{stem}.json"
+
+        if pre_img_blob_name not in all_blobs:
+            print(f"[WARN] Image pre_disaster manquante : {pre_img_blob_name}")
+            continue
+        if pre_label_blob_name not in all_blobs:
+            print(f"[WARN] Label manquant : {pre_label_blob_name}")
+            continue
+        if post_label_blob_name not in all_blobs:
+            print(f"[WARN] Label manquant : {post_label_blob_name}")
+            continue
+
+        event = "_".join(stem.split("_")[:-2])
+        pairs.append({
+            "pre_img":    pre_img_blob_name,
+            "post_img":   post_img_blob_name,
+            "pre_label":  pre_label_blob_name,
+            "post_label": post_label_blob_name,
+            "event":      event
+        })
+
+    print(f"[INFO] {len(pairs)} paires trouvées dans gs://{BUCKET_NAME}/{prefix}")
+    return pairs
+
+
+# ─────────────────────────────────────────────
+# 6. EXTRACT ALL CROPS TO DISK (lazy pipeline — OOM fix)
 # ─────────────────────────────────────────────
 
 def extract_crops_to_disk(
@@ -287,10 +454,11 @@ def extract_crops_to_disk(
 
 
 # ─────────────────────────────────────────────
-# 7. AUGMENTATION (team improvements merged)
+# 7. AUGMENTATION
 # ─────────────────────────────────────────────
 
 def _augment(image: tf.Tensor, label: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    """Applies random augmentations. Used by the lazy disk pipeline."""
     image = tf.image.random_flip_left_right(image)
     image = tf.image.random_flip_up_down(image)
     k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
