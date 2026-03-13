@@ -30,11 +30,11 @@ WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
 # Model selection
-MODEL_ARCHITECTURE = "dual"  # Options: "concat", "dual"
+MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 
 # Sauvegarde
-CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
-LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
+CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
