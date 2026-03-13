@@ -238,6 +238,7 @@ def compile_model(model):
             tf.keras.metrics.Precision(name="precision"),
             tf.keras.metrics.Recall(name="recall"),
             tf.keras.metrics.AUC(name="auc"),
+            tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
             tf.keras.metrics.F1Score(name="f1", threshold=0.5, average="micro")
             ]
     )
@@ -251,10 +252,10 @@ def get_callbacks():
     return [
         # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
-            monitor="val_loss",
+            monitor="val_auc_pr",
             patience=10,
             restore_best_weights=True,
-            mode="min",
+            mode="max",
             verbose=1
         ),
         # Réduction du LR si plateau
@@ -268,7 +269,7 @@ def get_callbacks():
         # Sauvegarde du meilleur modèle
         ModelCheckpoint(
             filepath=CHECKPOINT_PATH,
-            monitor="val_auc",
+            monitor="val_auc_pr",
             save_best_only=True,
             mode="max",
             verbose=1
@@ -291,8 +292,6 @@ def train(train_ds, val_ds, class_weights=None):
         model = build_damage_cnn_concat()
     elif MODEL_ARCHITECTURE=="cnn_dual":
         model = build_damage_cnn_dual()
-    else:
-        raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
     model = compile_model(model)
     model.summary()
