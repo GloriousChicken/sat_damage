@@ -46,11 +46,6 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
 # ─────────────────────────────────────────────
 
 def build_damage_cnn_concat(input_shape=(128, 128, 6)):
-# ─────────────────────────────────────────────
-# 2.1 6 CHANNELS CONCATENATION
-# ─────────────────────────────────────────────
-
-def build_damage_cnn_concat(input_shape=(128, 128, 6)):
     """
     CNN à 4 blocs convolutionnels pour classification binaire.
 
