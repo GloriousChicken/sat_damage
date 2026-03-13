@@ -2,9 +2,8 @@ import numpy as np
 from time import time
 from sklearn.utils.class_weight import compute_class_weight
 from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, find_image_pairs_gcs, split_samples, build_all_samples
-from satdamage.ml_logic.model import train, evaluate
+from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
-from satdamage.ml_logic.model import train_efficientnet
 from google.cloud import storage
 
 
@@ -74,7 +73,7 @@ def build_xview2_datasets(xview2_root: str):
     # ── 2. Extraction de TOUS les crops (avant le split)
     start_time = time()
     print("\n[2/5] Extraction de tous les crops...")
-    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
+    all_samples, all_labels = build_all_samples(all_pairs[:100], verbose=True)
     if not all_samples:
         raise ValueError("Aucun crop extrait. Vérifiez les données.")
     end_time = time()
