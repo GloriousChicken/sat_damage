@@ -174,8 +174,8 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
     inputs = layers.Input(shape=input_shape, name="input_pre_post")
 
     # ── Split 6-channel input into pre / post
-    pre  = layers.Lambda(lambda t: t[:, :, :, :3], name="split_pre")(inputs)
-    post = layers.Lambda(lambda t: t[:, :, :, 3:], name="split_post")(inputs)
+    pre  = inputs[:, :, :, :3]
+    post = inputs[:, :, :, 3:]
 
     # ── Siamese encoder (identical structure, independent weights for pre and post)
     def encoder(x, prefix):
@@ -197,7 +197,7 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
 
     # ── Explicit change signal: |post - pre|
     diff = layers.Subtract(name="subtract")([post_feat, pre_feat])
-    diff = layers.Lambda(lambda t: tf.abs(t), name="abs_diff")(diff)
+    diff = tf.abs(diff)
 
     # ── Merge: concatenate all three feature maps → (batch, 16, 16, 384)
     merged = layers.Concatenate(name="merge")([pre_feat, post_feat, diff])
@@ -252,7 +252,7 @@ def get_callbacks():
         # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
             monitor="val_loss",
-            patience=8,
+            patience=10,
             restore_best_weights=True,
             mode="min",
             verbose=1
@@ -319,7 +319,7 @@ def evaluate(model, test_ds, threshold=0.5):
     for images, labels in test_ds:
         preds = model.predict(images, verbose=0)
         y_pred_prob.extend(preds.flatten())
-        y_true.extend(labels.numpy())
+        y_true.extend(labels.numpy().flatten())
 
     y_pred = (np.array(y_pred_prob) >= threshold).astype(int)
     y_true = np.array(y_true).astype(int)
