@@ -16,21 +16,21 @@ VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
-EPOCHS        = 100
-SOURCE_SPLITS = ["train", "tier3"]
 
-# Chemins xView2
-TRAIN_DIR = "data/train"
-VAL_DIR   = "data/val"
-TEST_DIR  = "data/test"
+# EfficientNet parameters
+EPOCHS_WARMUP   = 10
+EPOCHS_FINETUNE = 30
+LR_WARMUP    = 1e-3    # Phase 1 : backbone gelé
+LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
+UNFREEZE_LAYERS = 40
 
-# Entraînement
+# CNN parameters
+EPOCHS        = 2
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
-DROPOUT_RATE  = 0.5
 
 # Model selection
-MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
