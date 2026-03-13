@@ -6,7 +6,8 @@ from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
 from satdamage.ml_logic.model import train_efficientnet
 from google.cloud import storage
-
+import gc
+import tensorflow as tf
 
 # ─────────────────────────────────────────────
 # 1. GESTION DU DÉSÉQUILIBRE DE CLASSES
@@ -74,7 +75,7 @@ def build_xview2_datasets(xview2_root: str):
     # ── 2. Extraction de TOUS les crops (avant le split)
     start_time = time()
     print("\n[2/5] Extraction de tous les crops...")
-    all_samples, all_labels = build_all_samples(all_pairs[:100], verbose=True)
+    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
     if not all_samples:
         raise ValueError("Aucun crop extrait. Vérifiez les données.")
     end_time = time()
@@ -151,6 +152,12 @@ if __name__ == "__main__":
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
     evaluate(model, test_ds)
+    print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
+
+    # explicit cleanup to avoid AtomicFunction __del__ noise at interpreter shutdown
+    del model, train_ds, val_ds, test_ds
+    tf.keras.backend.clear_session()
+    gc.collect()
 
     # ── Debug pas à pas (décommenter si besoin)
     #
