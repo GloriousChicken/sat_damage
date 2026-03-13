@@ -1,5 +1,4 @@
 import os
-
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -30,9 +29,12 @@ LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
+# Model selection
+MODEL_ARCHITECTURE = "dual"  # Options: "concat", "dual"
+
 # Sauvegarde
-CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
-LOG_DIR         = "logs/cnn_damage"
+CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
