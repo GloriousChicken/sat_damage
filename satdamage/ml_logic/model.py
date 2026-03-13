@@ -18,11 +18,6 @@ class ENetConfig:
     """
     Paramètres propres à EfficientNetV2B0.
     """
-    # ── Taille d'input
-    # EfficientNetV2B0 accepte 96×96 au minimum ; 128×128 est un bon
-    # compromis entre qualité des features et mémoire GPU
-    IMAGE_SIZE   = (128, 128)
-    INPUT_SHAPE  = (128, 128, 6)   # 6 canaux : pré(3) + post(3)
     # ── AdamW
     LR_WARMUP    = 1e-3    # Phase 1 : backbone gelé
     LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
@@ -30,16 +25,8 @@ class ENetConfig:
     # ── Entraînement
     EPOCHS_WARMUP   = 10
     EPOCHS_FINETUNE = 30
-    BATCH_SIZE      = 32
     # ── Fine-tuning : nombre de couches à dégeler depuis la fin
     UNFREEZE_LAYERS = 40
-    # ── Dropout dans le head
-    DROPOUT_HEAD = 0.4
-    DROPOUT_FC   = 0.3
-    # ── Sauvegarde
-    CHECKPOINT_PATH = "checkpoints/efficientnet_damage_best.keras"
-    LOG_DIR         = "logs/efficientnet_damage"
-
 
 # ─────────────────────────────────────────────
 # 1. ARCHITECTURE EfficientNetV2B0
@@ -150,57 +137,6 @@ def compile_efficientnet(model: Model, learning_rate: float) -> Model:
     )
     return model
 
-def get_efficientnet_callbacks(phase: str = "warmup"):
-    """
-    Callbacks adaptés à chaque phase d'entraînement.
-
-    Args:
-        phase : "warmup" ou "finetune"
-    """
-    log_dir = os.path.join(ENetConfig.LOG_DIR, phase)
-    os.makedirs(os.path.dirname(ENetConfig.CHECKPOINT_PATH), exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
-
-    patience_es = 6  if phase == "warmup" else 10
-    patience_lr = 3  if phase == "warmup" else 5
-
-    return [
-        # Arrêt si pas d'amélioration sur la val_loss
-        EarlyStopping(
-            monitor="val_auc_pr",
-            mode="max",
-            min_delta=1e-3,
-            patience=12,
-            start_from_epoch=5,
-            restore_best_weights=True,
-            verbose=1
-        ),
-        # Réduction du LR si plateau
-        ReduceLROnPlateau(
-            monitor="val_auc_pr",
-            mode="max",
-            factor=0.5,
-            patience=4,
-            min_delta=5e-4,
-            cooldown=1,
-            min_lr=1e-6,
-            verbose=1
-        ),
-        # Sauvegarde du meilleur modèle
-        ModelCheckpoint(
-            filepath=CHECKPOINT_PATH,
-            monitor="val_auc_pr",
-            mode="max",
-            save_best_only=True,
-            verbose=1
-        ),
-        # TensorBoard
-        TensorBoard(
-            log_dir=LOG_DIR,
-            histogram_freq=1
-        )
-    ]
-
 # ─────────────────────────────────────────────
 # 3. ENTRAÎNEMENT EN 2 PHASES
 # ─────────────────────────────────────────────
@@ -241,7 +177,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = ENetConfig.EPOCHS_WARMUP,
         class_weight    = class_weights,
-        callbacks       = get_efficientnet_callbacks(phase="warmup"),
+        callbacks       = get_callbacks(phase="warmup"),
         verbose         = 1,
     )
 
@@ -284,7 +220,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = ENetConfig.EPOCHS_FINETUNE,
         class_weight    = class_weights,
-        callbacks       = get_efficientnet_callbacks(phase="finetune"),
+        callbacks       = get_callbacks(phase="finetune"),
         verbose         = 1,
     )
 
@@ -513,10 +449,23 @@ def compile_model(model):
     )
     return model
 
+def get_callbacks(phase: str = "warmup"):
+    """
+    Callbacks adaptés à chaque phase d'entraînement.
 
-def get_callbacks():
+    Args:
+        phase : "warmup" ou "finetune" only used for efficientnet
+    """
     os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
+    if MODEL_ARCHITECTURE=="efficientnet":
+        log_dir = os.path.join(LOG_DIR, phase)
+        patience_es = 6  if phase == "warmup" else 10
+        patience_lr = 3  if phase == "warmup" else 5
+    else:
+        log_dir = LOG_DIR
+        patience_es = 12
+        patience_lr = 4
+    os.makedirs(log_dir, exist_ok=True)
 
     return [
         # Arrêt si pas d'amélioration sur la val_loss
@@ -524,7 +473,7 @@ def get_callbacks():
             monitor="val_auc_pr",
             mode="max",
             min_delta=1e-3,
-            patience=12,
+            patience=patience_es,
             start_from_epoch=5,
             restore_best_weights=True,
             verbose=1
@@ -534,7 +483,7 @@ def get_callbacks():
             monitor="val_auc_pr",
             mode="max",
             factor=0.5,
-            patience=4,
+            patience=patience_lr,
             min_delta=5e-4,
             cooldown=1,
             min_lr=1e-6,
@@ -550,12 +499,10 @@ def get_callbacks():
         ),
         # TensorBoard
         TensorBoard(
-            log_dir=LOG_DIR,
+            log_dir=log_dir,
             histogram_freq=1
         )
     ]
-
-
 
 # ─────────────────────────────────────────────
 # 3. ENTRAÎNEMENT
