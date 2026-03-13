@@ -291,8 +291,6 @@ def train(train_ds, val_ds, class_weights=None):
         model = build_damage_cnn_concat()
     elif MODEL_ARCHITECTURE=="cnn_dual":
         model = build_damage_cnn_dual()
-    else:
-        raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
     model = compile_model(model)
     model.summary()
