@@ -25,7 +25,7 @@ LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
 UNFREEZE_LAYERS = 40
 
 # CNN parameters
-EPOCHS        = 2
+EPOCHS        = 50
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 
