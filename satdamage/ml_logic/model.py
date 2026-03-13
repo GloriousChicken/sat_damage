@@ -291,6 +291,10 @@ def train(train_ds, val_ds, class_weights=None):
         model = build_damage_cnn_concat()
     if MODEL_ARCHITECTURE=="dual":
         model = build_damage_cnn_dual()
+    if MODEL_ARCHITECTURE=="concat":
+        model = build_damage_cnn_concat()
+    if MODEL_ARCHITECTURE=="dual":
+        model = build_damage_cnn_dual()
     model = compile_model(model)
     model.summary()
 
