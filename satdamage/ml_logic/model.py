@@ -253,16 +253,21 @@ def get_callbacks():
         # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
             monitor="val_auc_pr",
-            patience=10,
-            restore_best_weights=True,
             mode="max",
+            min_delta=1e-3,
+            patience=12,
+            start_from_epoch=5,
+            restore_best_weights=True,
             verbose=1
         ),
         # Réduction du LR si plateau
         ReduceLROnPlateau(
-            monitor="val_loss",
+            monitor="val_auc_pr",
+            mode="max",
             factor=0.5,
-            patience=5,
+            patience=4,
+            min_delta=5e-4,
+            cooldown=1,
             min_lr=1e-6,
             verbose=1
         ),
@@ -270,8 +275,8 @@ def get_callbacks():
         ModelCheckpoint(
             filepath=CHECKPOINT_PATH,
             monitor="val_auc_pr",
-            save_best_only=True,
             mode="max",
+            save_best_only=True,
             verbose=1
         ),
         # TensorBoard
