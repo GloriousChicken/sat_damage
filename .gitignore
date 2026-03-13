@@ -210,3 +210,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+challenge_50/
+challenge_balanced/
+tiny_data/
+cuda-keyring_1.1-1_all.deb
