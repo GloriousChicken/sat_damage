@@ -159,6 +159,7 @@ def crop_building(
 def process_image_pair(
     pre_path: str,
     post_path: str,
+    label_pre_path: str,
     label_post_path: str,
 ) -> List[Tuple[np.ndarray, np.ndarray, int]]:
     """
@@ -201,19 +202,21 @@ def process_image_pair(
     post_img = _load_image(post_path)
     h, w = pre_img.shape[:2]
 
-    buildings = load_json_buildings(label_post_path)
+    buildings_pre = load_json_buildings(label_pre_path)
+    buildings_post = load_json_buildings(label_post_path)
     samples = []
 
-    for building in buildings:
-        damage = building["damage"]
+    for building_pre, building_post in zip(buildings_pre, buildings_post):
+        damage = building_post["damage"]
         label = DAMAGE_TO_BINARY.get(damage, None)
         if label is None:
             continue
-        bbox = polygon_to_pixel_bbox(building["polygon"], w, h)
-        if bbox is None:
+        bbox_pre = polygon_to_pixel_bbox(building_pre["polygon"], w, h)
+        bbox_post = polygon_to_pixel_bbox(building_post["polygon"], w, h)
+        if bbox_pre is None or bbox_post is None:
             continue
-        pre_crop = crop_building(pre_img, bbox)
-        post_crop = crop_building(post_img, bbox)
+        pre_crop = crop_building(pre_img, bbox_pre)
+        post_crop = crop_building(post_img, bbox_post)
         samples.append((pre_crop, post_crop, label))
 
     return samples
@@ -264,10 +267,14 @@ def find_image_pairs(
 
             pre_stem = stem.replace("_post_disaster", "_pre_disaster")
             pre_img_path = img_dir / f"{pre_stem}{ext}"
+            pre_label_path = label_dir / f"{pre_stem}.json"
             post_label_path = label_dir / f"{stem}.json"
 
             if not pre_img_path.exists():
                 print(f"[WARN] Fichier image 'pre_disaster' manquant ou invalide pour : {stem}")
+                continue
+            if not pre_label_path.exists():
+                print(f"[WARN] Fichier 'label' manquant ou invalide pour : {stem_pre}")
                 continue
             if not post_label_path.exists():
                 print(f"[WARN] Fichier 'label' manquant ou invalide pour : {stem}")
@@ -280,6 +287,7 @@ def find_image_pairs(
             pairs.append({
                 "pre_img": str(pre_img_path),
                 "post_img": str(post_img_path),
+                "pre_label": str(pre_label_path),
                 "post_label": str(post_label_path),
                 "event": event,
             })
@@ -320,37 +328,41 @@ def find_image_pairs_gcs(
         and "/images/" in b
     ])
 
-    for post_blob_name in post_blobs:
+    for post_img_blob_name in post_blobs:
         # ex: "train/hurricane-florence/images/hurricane-florence_00000001_post_disaster.png"
-        parts = post_blob_name.rsplit("/", 1)   # ["train/.../images", "filename.png"]
+        parts = post_img_blob_name.rsplit("/", 1)   # ["train/.../images", "filename.png"]
         img_dir_prefix = parts[0]               # "train/.../images"
         filename = parts[1]                     # "hurricane-florence_00000001_post_disaster.png"
 
         stem, ext = filename.rsplit(".", 1)
         ext = f".{ext}"
 
-        # Construire les chemins pre_disaster et label
+        # Construire les chemins pre_disaster pre_label et post_label
         pre_stem = stem.replace("_post_disaster", "_pre_disaster")
         label_dir_prefix = img_dir_prefix.replace("/images", "/labels")
-
-        pre_blob_name   = f"{img_dir_prefix}/{pre_stem}{ext}"
-        label_blob_name = f"{label_dir_prefix}/{stem}.json"
+        pre_img_blob_name   = f"{img_dir_prefix}/{pre_stem}{ext}"
+        pre_label_blob_name = f"{label_dir_prefix}/{pre_stem}.json"
+        post_label_blob_name = f"{label_dir_prefix}/{stem}.json"
 
         # Vérifier l'existence dans le set de blobs
-        if pre_blob_name not in all_blobs:
-            print(f"[WARN] Image pre_disaster manquante : {pre_blob_name}")
+        if pre_img_blob_name not in all_blobs:
+            print(f"[WARN] Image pre_disaster manquante : {pre_img_blob_name}")
             continue
-        if label_blob_name not in all_blobs:
-            print(f"[WARN] Label manquant : {label_blob_name}")
+        if pre_label_blob_name not in all_blobs:
+            print(f"[WARN] Label manquant : {pre_label_blob_name}")
+            continue
+        if post_label_blob_name not in all_blobs:
+            print(f"[WARN] Label manquant : {post_label_blob_name}")
             continue
 
         # Nom de l'événement extrait du stem
         event = "_".join(stem.split("_")[:-2])
 
         pairs.append({
-            "pre_img":    pre_blob_name,
-            "post_img":   post_blob_name,
-            "post_label": label_blob_name,
+            "pre_img":    pre_img_blob_name,
+            "post_img":   post_img_blob_name,
+            "pre_label":  pre_label_blob_name,
+            "post_label": post_label_blob_name,
             "event":      event
         })
 
@@ -367,7 +379,7 @@ def _process_pair(pair: Dict[str, str]) -> Tuple[List[Tuple[np.ndarray, np.ndarr
     """
     try:
         samples = process_image_pair(
-            pair["pre_img"], pair["post_img"], pair["post_label"]
+            pair["pre_img"], pair["post_img"], pair["pre_label"], pair["post_label"]
         )
         image_pairs = [(pre_crop, post_crop) for pre_crop, post_crop, _ in samples]
         labels = [label for _, _, label in samples]
