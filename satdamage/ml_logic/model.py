@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers
+from tensorflow.keras.applications import EfficientNetV2B0
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from satdamage.params import *
@@ -36,8 +37,207 @@ class BinaryF1Score(tf.keras.metrics.Metric):
         self.precision.reset_state()
         self.recall.reset_state()
 
+
 # ─────────────────────────────────────────────
-# 1. BLOC CONVOLUTIONNEL DE BASE
+# 1. ARCHITECTURE EfficientNetV2B0
+# ─────────────────────────────────────────────
+
+def build_damage_efficientnet(input_shape=(128, 128, 6), freeze_backbone = True):
+    """
+    Construit le modèle EfficientNetV2B0.
+    Architecture complète :
+    ─────────────────────────────────────────────────────────
+    Input (128×128×6)
+        ↓
+    Conv1×1 + BN + ReLU          ← projection 6→3 canaux (18 params)
+        ↓
+    EfficientNetV2B0 backbone    ← pré-entraîné ImageNet (~5.9M params)
+      (include_top=False)          feature map : 4×4×1280
+        ↓
+    GlobalAveragePooling2D       ← vecteur 1280-dim
+        ↓
+    BatchNormalization
+        ↓
+    Dropout(0.4)
+        ↓
+    Dense(256) → ReLU → Dropout(0.3)
+        ↓
+    Dense(1) → Sigmoid           ← P(endommagé) ∈ [0, 1]
+    ─────────────────────────────────────────────────────────
+    Args:
+        input_shape      : (H, W, C) — C=6 pour paires pré/post
+        freeze_backbone  : True  = backbone gelé    (phase warm-up)
+                           False = backbone dégelé  (fine-tuning)
+    """
+    inputs = layers.Input(shape=input_shape, name="input_pre_post_6ch")
+
+    # ── Étape 1 : Projection 6 → 3 canaux
+    """
+    Projette l'input 6 canaux (pré+post) vers 3 canaux via Conv1×1.
+    """
+    x = layers.Conv2D(
+        filters     = 3,
+        kernel_size = 1,
+        padding     = "same",
+        use_bias    = False,
+        name        = "proj_conv1x1"
+    )(inputs)
+    x = layers.BatchNormalization(name="proj_bn")(x)
+    x = layers.ReLU(name="proj_relu")(x)
+
+    # ── Étape 2 : Backbone EfficientNetV2B0
+    backbone = EfficientNetV2B0(
+        include_top           = False,
+        weights               = "imagenet",
+        input_shape           = (input_shape[0], input_shape[1], 3),
+        include_preprocessing = False,
+        # include_preprocessing=True : le backbone applique sa propre
+        # normalisation [0,255] → [-1,1].
+    )
+    backbone.trainable = not freeze_backbone
+    x = backbone(x, training=not freeze_backbone)
+    # Sortie backbone : (batch, 4, 4, 1280) pour input 128×128
+
+    # ── Étape 3 : Head de classification binaire
+    x = layers.GlobalAveragePooling2D(name="gap")(x)
+    x = layers.BatchNormalization(name="head_bn")(x)
+    x = layers.Dropout(0.4, name="head_drop")(x)
+
+    x = layers.Dense(256, activation="relu", name="fc1")(x)
+    x = layers.Dropout(0.3, name="fc1_drop")(x)
+
+    outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+
+    return Model(inputs, outputs,
+                 name="EfficientNetV2B0_DamageClassifier")
+
+# ─────────────────────────────────────────────
+# 2. COMPILATION & CALLBACKS
+# ─────────────────────────────────────────────
+
+def compile_efficientnet(model: Model, learning_rate: float) -> Model:
+    """
+    Compile avec AdamW et métriques binaires.
+    Appelée deux fois : une fois au warm-up, une fois au fine-tuning.
+
+    label_smoothing=0.05 :
+        Adoucit les targets 0→0.05 et 1→0.95.
+        Réduit la confiance excessive du modèle sur un dataset bruité
+        (les annotations xView2 contiennent des erreurs de labeling).
+    """
+    model.compile(
+        optimizer = tf.keras.optimizers.AdamW(
+                        learning_rate = learning_rate,
+                        weight_decay  = 1e-2,
+                        beta_1        = 0.9,
+                        beta_2        = 0.999,
+                        epsilon       = 1e-7,
+        ),
+        loss      = tf.keras.losses.BinaryCrossentropy(
+                        label_smoothing=0.05
+        ),
+        metrics   = [
+            tf.keras.metrics.BinaryAccuracy(name="accuracy"),
+            tf.keras.metrics.Precision(name="precision"),
+            tf.keras.metrics.Recall(name="recall"),
+            tf.keras.metrics.AUC(name="auc"),
+            tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
+            # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
+        ]
+    )
+    return model
+
+# ─────────────────────────────────────────────
+# 3. ENTRAÎNEMENT EN 2 PHASES
+# ─────────────────────────────────────────────
+
+def train_efficientnet(train_ds, val_ds, class_weights=None):
+    """
+    Entraîne EfficientNetV2B0 en deux phases successives.
+
+    Phase 1 — Warm-up (backbone gelé, 10 epochs)
+    ──────────────────────────────────────────────
+    Seuls la couche de projection Conv1×1 et le head Dense s'entraînent.
+    Le backbone conserve ses poids ImageNet intacts.
+    Objectif : initialiser correctement le head avant de toucher
+    au backbone — sans cette phase, les gradients aléatoires du head
+    risquent de détériorer les features pré-entraînées.
+
+    Phase 2 — Fine-tuning (40 dernières couches dégelées, 30 epochs)
+    ──────────────────────────────────────────────────────────────────
+    Learning rate réduit (5e-5) pour adapter doucement le backbone
+    aux images satellites sans "oublier" ImageNet (catastrophic forgetting).
+    AdamW avec weight_decay pour régulariser les nouveaux poids.
+
+    Retourne : (model, history_warmup, history_finetune)
+    """
+    # ── Phase 1 : Warm-up
+    print("=" * 55)
+    print("  Phase 1 — Warm-up  (backbone gelé)")
+    print(f"  AdamW lr={LR_WARMUP} | "
+          f"{EPOCHS_WARMUP} epochs max")
+    print("=" * 55)
+
+    model = build_damage_efficientnet(freeze_backbone=True)
+    model = compile_efficientnet(model, LR_WARMUP)
+    model.summary()
+
+    history_warmup = model.fit(
+        train_ds,
+        validation_data = val_ds,
+        epochs          = EPOCHS_WARMUP,
+        class_weight    = class_weights,
+        callbacks       = get_callbacks(phase="warmup"),
+        verbose         = 1,
+    )
+
+    # ── Phase 2 : Fine-tuning
+    print("\n" + "=" * 55)
+    print("  Phase 2 — Fine-tuning  (backbone partiellement dégelé)")
+    print(f"  AdamW lr={LR_FINETUNE} | "
+          f"{EPOCHS_FINETUNE} epochs max")
+    print("=" * 55)
+
+    # Localiser le backbone dans le modèle
+    backbone_layer = next(
+        (l for l in model.layers if "efficientnetv2" in l.name.lower()),
+        None
+    )
+
+    if backbone_layer is not None:
+        backbone_layer.trainable = True
+
+        # Geler toutes les couches SAUF les N dernières
+        n_layers     = len(backbone_layer.layers)
+        freeze_until = n_layers - UNFREEZE_LAYERS
+
+        for i, layer in enumerate(backbone_layer.layers):
+            layer.trainable = (i >= freeze_until)
+
+        n_frozen    = sum(1 for l in backbone_layer.layers if not l.trainable)
+        n_trainable = sum(1 for l in backbone_layer.layers if l.trainable)
+        print(f"  Backbone : {n_frozen} couches gelées | "
+              f"{n_trainable} dégelées")
+    else:
+        print("  [WARN] Backbone non trouvé — fine-tuning du modèle entier")
+        model.trainable = True
+
+    # Recompiler obligatoire après modification de trainable
+    model = compile_efficientnet(model, LR_FINETUNE)
+
+    history_finetune = model.fit(
+        train_ds,
+        validation_data = val_ds,
+        epochs          = EPOCHS_FINETUNE,
+        class_weight    = class_weights,
+        callbacks       = get_callbacks(phase="finetune"),
+        verbose         = 1,
+    )
+
+    return model, history_warmup, history_finetune
+
+# ─────────────────────────────────────────────
+# 1. ARCHITECTURE CNN PRINCIPALE & BLOC CONVOLUTIONNEL DE BASE
 # ─────────────────────────────────────────────
 
 def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
@@ -61,10 +261,10 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
 
 
 # ─────────────────────────────────────────────
-# 2. ARCHITECTURE CNN PRINCIPALE
+# 2.1 6 CHANNELS CONCATENATION
 # ─────────────────────────────────────────────
 
-def build_damage_cnn(input_shape=(128, 128, 6)):
+def build_damage_cnn_concat(input_shape=(128, 128, 6)):
     """
     CNN à 4 blocs convolutionnels pour classification binaire.
 
@@ -118,7 +318,7 @@ def build_damage_cnn(input_shape=(128, 128, 6)):
     x = layers.Dense(256, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc1")(x)
     x = layers.BatchNormalization(name="fc1_bn")(x)
     x = layers.ReLU(name="fc1_relu")(x)
-    x = layers.Dropout(DROPOUT_RATE, name="fc1_drop")(x)
+    x = layers.Dropout(0.5, name="fc1_drop")(x)
 
     x = layers.Dense(128, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc2")(x)
     x = layers.BatchNormalization(name="fc2_bn")(x)
@@ -134,7 +334,111 @@ def build_damage_cnn(input_shape=(128, 128, 6)):
 
 
 # ─────────────────────────────────────────────
-# 3. COMPILATION & CALLBACKS
+# 2.2 DUAL STREAM
+# ─────────────────────────────────────────────
+
+def se_block(x, reduction=16, name="se"):
+    """Squeeze-and-Excitation: recalibrates channel importance."""
+    filters = x.shape[-1]
+    se = layers.GlobalAveragePooling2D(name=f"{name}_gap")(x)
+    se = layers.Dense(max(1, filters // reduction), activation="relu",  name=f"{name}_fc1")(se)
+    se = layers.Dense(filters,                      activation="sigmoid", name=f"{name}_fc2")(se)
+    se = layers.Reshape((1, 1, filters), name=f"{name}_reshape")(se)
+    return layers.Multiply(name=f"{name}_scale")([x, se])
+
+
+def res_block(x, filters, dropout=0.25, name="res"):
+    """Conv → BN → ReLU → Conv → BN → SE → Add (residual)."""
+    shortcut = x
+    x = conv_block(x, filters, name=f"{name}_c1")
+    x = conv_block(x, filters, name=f"{name}_c2")
+    x = se_block(x, name=f"{name}_se")
+    # Project shortcut to matching filter depth if needed
+    if shortcut.shape[-1] != filters:
+        shortcut = layers.Conv2D(
+            filters, 1, padding="same",
+            kernel_regularizer=regularizers.l2(WEIGHT_DECAY),
+            name=f"{name}_proj"
+        )(shortcut)
+        shortcut = layers.BatchNormalization(name=f"{name}_proj_bn")(shortcut)
+    x = layers.Add(name=f"{name}_add")([x, shortcut])
+    if dropout > 0:
+        x = layers.Dropout(dropout, name=f"{name}_drop")(x)
+    return x
+
+
+def build_damage_cnn_dual(input_shape=(128, 128, 6)):
+    """
+    Dual-stream CNN with residual blocks and SE attention for binary damage classification.
+
+    Architecture :
+        Input (128×128×6)  →  split into Pre (×3) and Post (×3)
+              ↓                              ↓
+        Shared-weight siamese encoder (3 residual stages + SE)
+              ↓                              ↓
+        Merge: Concat(pre_feat, post_feat, |post_feat - pre_feat|)
+              ↓
+        Fusion block : ResBlock(256) → GlobalAvgPool
+              ↓
+        Dense(256) → BN → ReLU → Dropout
+              ↓
+        Dense(128) → BN → ReLU → Dropout
+              ↓
+        Output(1) → Sigmoid
+    """
+    inputs = layers.Input(shape=input_shape, name="input_pre_post")
+
+    # ── Split 6-channel input into pre / post
+    pre  = inputs[:, :, :, :3]
+    post = inputs[:, :, :, 3:]
+
+    # ── Siamese encoder (identical structure, independent weights for pre and post)
+    def encoder(x, prefix):
+        # Stage 1 — 32 filters, 64×64
+        x = res_block(x, 32,  dropout=0.25, name=f"{prefix}_s1")
+        x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool1")(x)
+
+        # Stage 2 — 64 filters, 32×32
+        x = res_block(x, 64,  dropout=0.25, name=f"{prefix}_s2")
+        x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool2")(x)
+
+        # Stage 3 — 128 filters, 16×16
+        x = res_block(x, 128, dropout=0.35, name=f"{prefix}_s3")
+        x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool3")(x)
+        return x  # (batch, 16, 16, 128)
+
+    pre_feat  = encoder(pre,  "pre")
+    post_feat = encoder(post, "post")
+
+    # ── Explicit change signal: |post - pre|
+    diff = layers.Subtract(name="subtract")([post_feat, pre_feat])
+    diff = tf.keras.ops.abs(diff)
+
+    # ── Merge: concatenate all three feature maps → (batch, 16, 16, 384)
+    merged = layers.Concatenate(name="merge")([pre_feat, post_feat, diff])
+
+    # ── Fusion block — 256 filters with residual
+    x = res_block(merged, 256, dropout=0.35, name="fusion")
+    x = layers.GlobalAveragePooling2D(name="global_avg_pool")(x)
+    # → (batch, 256)
+
+    # ── Classification head
+    x = layers.Dense(256, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc1")(x)
+    x = layers.BatchNormalization(name="fc1_bn")(x)
+    x = layers.ReLU(name="fc1_relu")(x)
+    x = layers.Dropout(0.5, name="fc1_drop")(x)
+
+    x = layers.Dense(128, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc2")(x)
+    x = layers.BatchNormalization(name="fc2_bn")(x)
+    x = layers.ReLU(name="fc2_relu")(x)
+    x = layers.Dropout(0.3, name="fc2_drop")(x)
+
+    outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+
+    return Model(inputs, outputs, name="CNN_DualStream_DamageClassifier")
+
+# ─────────────────────────────────────────────
+# 2. COMPILATION & CALLBACKS
 # ─────────────────────────────────────────────
 
 def compile_model(model):
@@ -149,66 +453,86 @@ def compile_model(model):
             tf.keras.metrics.Precision(name="precision"),
             tf.keras.metrics.Recall(name="recall"),
             tf.keras.metrics.AUC(name="auc"),
+            tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
             BinaryF1Score(threshold=0.5, name="f1")
             ]
     )
     return model
 
-
-def get_callbacks():
-    run_id   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    ckpt_path = CHECKPOINT_PATH.replace(".keras", f"_{run_id}.keras")
-    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
+def get_callbacks(phase: str = "warmup"):
+    """
+    Callbacks adaptés à chaque phase d'entraînement.
+    Args:
+        phase : "warmup" ou "finetune" only used for efficientnet
+    """
+    os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
+    if MODEL_ARCHITECTURE == "efficientnet":
+        log_dir = os.path.join(LOG_DIR, phase)
+        patience_es = 6  if phase == "warmup" else 10
+        patience_lr = 3  if phase == "warmup" else 5
+        ckpt_path = CHECKPOINT_PATH
+        monitor = "val_auc_pr"
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ckpt_path = CHECKPOINT_PATH.replace(".keras", f"_{run_id}.keras")
+        log_dir = LOG_DIR
+        patience_es = 12
+        patience_lr = 4
+        monitor = "val_f1"
+    os.makedirs(log_dir, exist_ok=True)
     print(f"[Checkpoint] {ckpt_path}")
 
     return [
-        # Arrêt si pas d'amélioration sur le val_f1
         EarlyStopping(
-            monitor="val_f1",
-            patience=8,
-            restore_best_weights=True,
+            monitor=monitor,
             mode="max",
+            min_delta=1e-3,
+            patience=patience_es,
+            start_from_epoch=5,
+            restore_best_weights=True,
             verbose=1
         ),
-        # Réduction du LR si plateau sur val_f1
         ReduceLROnPlateau(
-            monitor="val_f1",
+            monitor=monitor,
             factor=0.5,
-            patience=5,
+            patience=patience_lr,
+            min_delta=5e-4,
+            cooldown=1,
             min_lr=1e-6,
             mode="max",
             verbose=1
         ),
-        # Sauvegarde du meilleur modèle selon val_f1
         ModelCheckpoint(
             filepath=ckpt_path,
-            monitor="val_f1",
-            save_best_only=True,
+            monitor=monitor,
             mode="max",
+            save_best_only=True,
             verbose=1
         ),
-        # TensorBoard
         TensorBoard(
-            log_dir=LOG_DIR,
+            log_dir=log_dir,
             histogram_freq=1
-        ),
+        )
     ]
 
-
-
 # ─────────────────────────────────────────────
-# 4. ENTRAÎNEMENT
+# 3. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
 def train(train_ds, val_ds, steps_per_epoch=None):
     """
-    Entraîne le modèle. Le rééquilibrage des classes est géré par le
+    Entraîne le modèle CNN. Le rééquilibrage des classes est géré par le
     balanced sampling dans build_dataset_from_dir() — class_weight n'est
     donc pas utilisé pour éviter une double correction.
     steps_per_epoch doit être fourni quand train_ds est infini (balanced sampling).
     """
-    model = build_damage_cnn()
+    if MODEL_ARCHITECTURE == "cnn_concat":
+        model = build_damage_cnn_concat()
+    elif MODEL_ARCHITECTURE == "cnn_dual":
+        model = build_damage_cnn_dual()
+    else:
+        raise ValueError(f"Architecture CNN inconnue: {MODEL_ARCHITECTURE}. Utilisez 'cnn_concat' ou 'cnn_dual'.")
+
     model = compile_model(model)
     model.summary()
 
@@ -224,7 +548,7 @@ def train(train_ds, val_ds, steps_per_epoch=None):
 
 
 # ─────────────────────────────────────────────
-# 5. ÉVALUATION
+# 4. ÉVALUATION
 # ─────────────────────────────────────────────
 
 def find_best_threshold(y_true, y_pred_prob):
@@ -248,16 +572,15 @@ def evaluate(model, test_ds, threshold=None):
     Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
     avant d'afficher le rapport final.
     """
-
-    y_true, y_pred_prob = [], []
+    y_true, y_prob = [], []
 
     for images, labels in test_ds:
         preds = model.predict(images, verbose=0)
-        y_pred_prob.extend(preds.flatten())
+        y_prob.extend(preds.flatten())
         y_true.extend(labels.numpy())
 
     y_true = np.array(y_true).astype(int)
-    y_pred_prob = np.array(y_pred_prob)
+    y_pred_prob = np.array(y_prob)
 
     if threshold is None:
         threshold = find_best_threshold(y_true, y_pred_prob)
@@ -270,10 +593,12 @@ def evaluate(model, test_ds, threshold=None):
         target_names=["non-endommagé", "endommagé"]
     ))
 
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
     print("── Matrice de confusion ──")
-    print(confusion_matrix(y_true, y_pred))
-
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-    print(f"\nF1-score (endommagé) : {f1:.4f}")
+    print(f"  TN={tn:>5}  FP={fp:>5}")
+    print(f"  FN={fn:>5}  TP={tp:>5}")
+    print(f"\nF1-score (endommagé) : {f1_score(y_true, y_pred, zero_division=0):.4f}")
+    print(f"Threshold utilisé    : {threshold}")
 
     return y_pred, y_pred_prob

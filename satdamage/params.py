@@ -1,5 +1,4 @@
 import os
-
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -17,23 +16,27 @@ VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
-EPOCHS        = 50
-SOURCE_SPLITS = ["train", "tier3"]
 
-# Chemins xView2
-TRAIN_DIR = "data/train"
-VAL_DIR   = "data/val"
-TEST_DIR  = "data/test"
+# EfficientNet parameters
+EPOCHS_WARMUP   = 10
+EPOCHS_FINETUNE = 30
+LR_WARMUP    = 1e-3    # Phase 1 : backbone gelé
+LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
+UNFREEZE_LAYERS = 40
 
-# Entraînement
+# CNN parameters
+EPOCHS        = 2
 LEARNING_RATE = 2e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 FOCAL_GAMMA   = 2.0
 
+# Model selection
+MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+
 # Sauvegarde
-CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
-LOG_DIR         = "logs/cnn_damage"
+CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
@@ -56,12 +59,12 @@ GAR_IMAGE = os.environ.get("GAR_IMAGE")
 GAR_MEMORY = os.environ.get("GAR_MEMORY")
 
 ##################  CONSTANTS  #####################
-LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "training_outputs")
+LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), "code", "GloriousChicken", "sat_damage", "checkpoints")
 
 ##################  VALIDATIONS  ################
 
 env_valid_options = dict(
-    MODEL_TARGET=["local", "gcs", "mlflow"]
+    MODEL_TARGET=["local", "gcs"]
 )
 
 def validate_env_value(env, valid_options):

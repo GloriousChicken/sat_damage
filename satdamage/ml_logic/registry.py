@@ -1,7 +1,7 @@
 import glob
 import os
 import time
-import pickle
+import json
 
 from colorama import Fore, Style
 from tensorflow import keras
@@ -25,12 +25,12 @@ def save_results(params: dict, metrics: dict) -> None:
         # Save params locally
         if params is not None:
             with open(params_path, "wb") as file:
-                pickle.dump(params, file)
+                json.dump(params, file)
 
         # Save metrics locally
         if metrics is not None:
             with open(metrics_path, "wb") as file:
-                pickle.dump(metrics, file)
+                json.dump(metrics, file)
 
         print("✅ Results saved locally")
 
@@ -44,13 +44,19 @@ def save_results(params: dict, metrics: dict) -> None:
         if params is not None:
             params_filename = params_path.split("/")[-1] # e.g. "20230208-161047.pickle" for instance
             blob = bucket.blob(f"params/{params_filename}")
-            blob.upload_from_filename(params_filename)
+            blob.upload_from_string(
+                data=json.dumps(params),
+                content_type="application/json"
+            )
 
         # Save metrics in the cloud
         if metrics is not None:
             metrics_filename = metrics_path.split("/")[-1] # e.g. "20230208-161047.pickle" for instance
             blob = bucket.blob(f"metrics/{metrics_filename}")
-            blob.upload_from_filename(metrics_filename)
+            blob.upload_from_string(
+                data=json.dumps(metrics),
+                content_type="application/json"
+            )
 
         print("✅ Results saved to GCS")
 
@@ -69,7 +75,7 @@ def load_model() -> keras.Model:
         print(Fore.BLUE + f"\nLoad latest model from local registry..." + Style.RESET_ALL)
 
         # Get the latest model version name by the timestamp on disk
-        local_model_directory = os.path.join(LOCAL_REGISTRY_PATH, "models")
+        local_model_directory = os.path.join(LOCAL_REGISTRY_PATH, "checkpoints")
         local_model_paths = glob.glob(f"{local_model_directory}/*.h5")
 
         if not local_model_paths:
@@ -121,15 +127,17 @@ def save_model(model: keras.Model = None) -> None:
         return None
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    model_path = os.path.join(LOCAL_REGISTRY_PATH, "models", f"{timestamp}.h5")
+    if model.name:
+        model_path = os.path.join(LOCAL_REGISTRY_PATH, "checkpoints", f"{timestamp}_{model.name}.h5")
+    else:
+        model_path = os.path.join(LOCAL_REGISTRY_PATH, "checkpoints", f"{timestamp}.h5")
 
-    if MODEL_TARGET == "local":
-        # Save model locally
-        model.save(model_path)
+    # Save model locally
+    model.save(model_path)
 
-        print("✅ Model saved locally")
+    print("✅ Model saved locally")
 
-    elif MODEL_TARGET == "gcs":
+    if MODEL_TARGET == "gcs":
         # Save model in the cloud
         model_filename = model_path.split("/")[-1] # e.g. "20230208-161047.h5" for instance
         client = storage.Client()
