@@ -4,6 +4,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, find_image_pairs_gcs, split_samples, build_all_samples
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
+from satdamage.ml_logic.model import train_efficientnet
 from google.cloud import storage
 
 
