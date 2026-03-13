@@ -14,6 +14,28 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from satdamage.params import *
 
+
+class BinaryF1Score(tf.keras.metrics.Metric):
+    """F1 metric compatible with binary sigmoid output (None, 1) and flat labels (None,)."""
+    def __init__(self, threshold=0.5, name="f1", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.precision = tf.keras.metrics.Precision(thresholds=threshold)
+        self.recall    = tf.keras.metrics.Recall(thresholds=threshold)
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        self.precision.update_state(y_true, y_pred, sample_weight)
+        self.recall.update_state(y_true, y_pred, sample_weight)
+
+    def result(self):
+        p = self.precision.result()
+        r = self.recall.result()
+        return 2 * p * r / (p + r + tf.keras.backend.epsilon())
+
+    def reset_state(self):
+        self.precision.reset_state()
+        self.recall.reset_state()
+
 # ─────────────────────────────────────────────
 # 1. BLOC CONVOLUTIONNEL DE BASE
 # ─────────────────────────────────────────────
@@ -127,7 +149,7 @@ def compile_model(model):
             tf.keras.metrics.Precision(name="precision"),
             tf.keras.metrics.Recall(name="recall"),
             tf.keras.metrics.AUC(name="auc"),
-            tf.keras.metrics.F1Score(name="f1", threshold=0.5, average="micro")
+            BinaryF1Score(threshold=0.5, name="f1")
             ]
     )
     return model
