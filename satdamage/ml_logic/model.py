@@ -197,7 +197,7 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
 
     # ── Explicit change signal: |post - pre|
     diff = layers.Subtract(name="subtract")([post_feat, pre_feat])
-    diff = tf.abs(diff)
+    diff = tf.keras.ops.abs(diff)
 
     # ── Merge: concatenate all three feature maps → (batch, 16, 16, 384)
     merged = layers.Concatenate(name="merge")([pre_feat, post_feat, diff])
@@ -287,14 +287,13 @@ def get_callbacks():
 # ─────────────────────────────────────────────
 
 def train(train_ds, val_ds, class_weights=None):
-    if MODEL_ARCHITECTURE=="concat":
+    if MODEL_ARCHITECTURE=="cnn_concat":
         model = build_damage_cnn_concat()
-    if MODEL_ARCHITECTURE=="dual":
+    elif MODEL_ARCHITECTURE=="cnn_dual":
         model = build_damage_cnn_dual()
-    if MODEL_ARCHITECTURE=="concat":
-        model = build_damage_cnn_concat()
-    if MODEL_ARCHITECTURE=="dual":
-        model = build_damage_cnn_dual()
+    else:
+        raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
+
     model = compile_model(model)
     model.summary()
 
