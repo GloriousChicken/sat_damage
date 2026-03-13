@@ -1,5 +1,4 @@
 import os
-
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -34,6 +33,8 @@ DROPOUT_RATE  = 0.5
 MODEL_ARCHITECTURE = "concat"  # Options: "concat", "dual"
 
 # Sauvegarde
+CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
 CHECKPOINT_PATH = f"checkpoints/cnn_damage_{MODEL_ARCHITECTURE}_best.keras"
 LOG_DIR         = f"logs/cnn_damage_{MODEL_ARCHITECTURE}"
 
