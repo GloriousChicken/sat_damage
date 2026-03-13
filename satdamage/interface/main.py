@@ -3,7 +3,8 @@ from time import time
 from sklearn.utils.class_weight import compute_class_weight
 from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, find_image_pairs_gcs, split_samples, build_all_samples
 from satdamage.ml_logic.model import train, evaluate
-from satdamage.params import MODEL_TARGET, DATA_DIR
+from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
+from satdamage.ml_logic.model import train_efficientnet
 from google.cloud import storage
 
 
@@ -142,8 +143,13 @@ if __name__ == "__main__":
 
     # ── Lancement de l'entraînement
 
-    model, history = train(train_ds, val_ds)
-    # model, history = train(train_ds, val_ds, class_weights=class_weights)
+    if MODEL_ARCHITECTURE=="efficientnet":
+        model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds)
+    elif MODEL_ARCHITECTURE=="cnn_dual" or MODEL_ARCHITECTURE=="cnn_concat":
+        model, history = train(train_ds, val_ds)
+    else:
+        raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
+
     evaluate(model, test_ds)
 
     # ── Debug pas à pas (décommenter si besoin)
