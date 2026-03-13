@@ -278,44 +278,6 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
 
     return model, history_warmup, history_finetune
 
-# ═══════════════════════════════════════════════════════════
-# 4. ÉVALUATION
-# ═══════════════════════════════════════════════════════════
-
-def evaluate_efficientnet(model: Model, test_ds,
-                          threshold: float = 0.5):
-    """
-    Évalue le modèle : rapport complet + matrice de confusion.
-
-    Args:
-        threshold : seuil de décision.
-                    Utiliser find_best_threshold() pour l'optimiser.
-    """
-    y_true, y_prob = [], []
-
-    for images, labels in test_ds:
-        preds = model.predict(images, verbose=0)
-        y_prob.extend(preds.flatten())
-        y_true.extend(labels.numpy())
-
-    y_pred = (np.array(y_prob) >= threshold).astype(int)
-    y_true = np.array(y_true).astype(int)
-
-    print("\n── Rapport (EfficientNetV2B0 binaire) ──")
-    print(classification_report(y_true, y_pred,
-          target_names=["no-damage", "endommagé"]))
-
-    cm = confusion_matrix(y_true, y_pred)
-    tn, fp, fn, tp = cm.ravel()
-    print("── Matrice de confusion ──")
-    print(f"  TN={tn:>5}  FP={fp:>5}")
-    print(f"  FN={fn:>5}  TP={tp:>5}")
-    print(f"\nF1-score  (endommagé) : {f1_score(y_true, y_pred):.4f}")
-    print(f"Threshold utilisé    : {threshold}")
-
-    return y_pred, y_prob
-
-
 # ─────────────────────────────────────────────
 # 1. ARCHITECTURE CNN PRINCIPALE & BLOC CONVOLUTIONNEL DE BASE
 # ─────────────────────────────────────────────
@@ -487,35 +449,35 @@ def train(train_ds, val_ds, class_weights=None):
     return model, history
 
 
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 # 4. ÉVALUATION
-# ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
 
-def evaluate(model, test_ds, threshold=0.5):
+def evaluate(model: Model, test_ds,
+                          threshold: float = 0.5):
     """
-    Évalue le modèle et affiche la matrice de confusion + F1.
+    Évalue le modèle : rapport complet + matrice de confusion.
     """
-
-    y_true, y_pred_prob = [], []
+    y_true, y_prob = [], []
 
     for images, labels in test_ds:
         preds = model.predict(images, verbose=0)
-        y_pred_prob.extend(preds.flatten())
+        y_prob.extend(preds.flatten())
         y_true.extend(labels.numpy())
 
-    y_pred = (np.array(y_pred_prob) >= threshold).astype(int)
+    y_pred = (np.array(y_prob) >= threshold).astype(int)
     y_true = np.array(y_true).astype(int)
 
-    print("\n── Rapport de classification ──")
-    print(classification_report(
-        y_true, y_pred,
-        target_names=["non-endommagé", "endommagé"]
-    ))
+    print(f"\n── Rapport de classification {model.name} ──")
+    print(classification_report(y_true, y_pred,
+          target_names=["no-damage", "endommagé"]))
 
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
     print("── Matrice de confusion ──")
-    print(confusion_matrix(y_true, y_pred))
+    print(f"  TN={tn:>5}  FP={fp:>5}")
+    print(f"  FN={fn:>5}  TP={tp:>5}")
+    print(f"\nF1-score  (endommagé) : {f1_score(y_true, y_pred):.4f}")
+    print(f"Threshold utilisé    : {threshold}")
 
-    f1 = f1_score(y_true, y_pred)
-    print(f"\nF1-score (endommagé) : {f1:.4f}")
-
-    return y_pred, y_pred_prob
+    return y_pred, y_prob

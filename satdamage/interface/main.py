@@ -112,7 +112,7 @@ if __name__ == "__main__":
     # evaluate(model, test_ds)
     # EFFICIENTNET
     model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds, class_weights=class_weights)
-    evaluate_efficientnet(model, test_ds)
+    evaluate(model, test_ds)
 
     # ── Debug pas à pas (décommenter si besoin)
     #
