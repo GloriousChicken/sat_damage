@@ -9,7 +9,7 @@ from satdamage.ml_logic.preprocessor import (
     compute_class_weights_from_dir,
 )
 from satdamage.ml_logic.model import train, evaluate
-from satdamage.params import DATA_DIR
+from satdamage.params import DATA_DIR, BATCH_SIZE
 
 # ─────────────────────────────────────────────
 # CONFIGURATION
@@ -69,7 +69,12 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
 
-    return train_ds, val_ds, test_ds
+    # steps_per_epoch: 2 passes through the minority class per epoch
+    n_damaged = len(list((Path(crops_dir) / "train" / "1").glob("*.png")))
+    steps_per_epoch = (2 * n_damaged) // BATCH_SIZE
+    print(f"[INFO] steps_per_epoch = {steps_per_epoch} (2 × {n_damaged} damaged / {BATCH_SIZE})")
+
+    return train_ds, val_ds, test_ds, steps_per_epoch
 
 
 # ─────────────────────────────────────────────
@@ -78,10 +83,10 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
 if __name__ == "__main__":
 
-    train_ds, val_ds, test_ds = build_xview2_datasets(
+    train_ds, val_ds, test_ds, steps_per_epoch = build_xview2_datasets(
         xview2_root=DATA_DIR,
         crops_dir=CROPS_DIR,
     )
 
-    model, history = train(train_ds, val_ds)
+    model, history = train(train_ds, val_ds, steps_per_epoch=steps_per_epoch)
     evaluate(model, test_ds)

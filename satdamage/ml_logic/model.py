@@ -201,11 +201,12 @@ def get_callbacks():
 # 4. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
-def train(train_ds, val_ds):
+def train(train_ds, val_ds, steps_per_epoch=None):
     """
     Entraîne le modèle. Le rééquilibrage des classes est géré par le
     balanced sampling dans build_dataset_from_dir() — class_weight n'est
     donc pas utilisé pour éviter une double correction.
+    steps_per_epoch doit être fourni quand train_ds est infini (balanced sampling).
     """
     model = build_damage_cnn()
     model = compile_model(model)
@@ -215,6 +216,7 @@ def train(train_ds, val_ds):
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
+        steps_per_epoch=steps_per_epoch,
         callbacks=get_callbacks(),
         verbose=1
     )
