@@ -527,6 +527,10 @@ def balance_dataset(image_pairs, labels, majority_ratio=2):
 
 def build_dataset(image_pairs, labels, training=False, batch_size=32, balance=True, majority_ratio=2.0):
 
+    # safer
+    def _map_preprocess(imgs, lbl):
+        return preprocess_pair(imgs[0], imgs[1], lbl)
+
     if training and balance:
         # Balance the dataset by oversampling the minority class and undersampling the majority class.
         # This should work for multiple classes, but here we only have 2.
@@ -537,7 +541,7 @@ def build_dataset(image_pairs, labels, training=False, batch_size=32, balance=Tr
     labels_arr = np.array(labels, dtype=np.float32).reshape(-1, 1)
 
     ds = tf.data.Dataset.from_tensor_slices(((pre_images, post_images), labels_arr))
-    ds = ds.map(lambda imgs, lbl: preprocess_pair(imgs[0], imgs[1], lbl), num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.map(_map_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
     if training:
         ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(1000)
