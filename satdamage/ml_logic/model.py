@@ -14,19 +14,6 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from satdamage.params import *
 
-class ENetConfig:
-    """
-    Paramètres propres à EfficientNetV2B0.
-    """
-    # ── AdamW
-    LR_WARMUP    = 1e-3    # Phase 1 : backbone gelé
-    LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
-    WEIGHT_DECAY = 1e-2    # Régularisation découplée d'AdamW
-    # ── Entraînement
-    EPOCHS_WARMUP   = 10
-    EPOCHS_FINETUNE = 30
-    # ── Fine-tuning : nombre de couches à dégeler depuis la fin
-    UNFREEZE_LAYERS = 40
 
 # ─────────────────────────────────────────────
 # 1. ARCHITECTURE EfficientNetV2B0
@@ -118,7 +105,7 @@ def compile_efficientnet(model: Model, learning_rate: float) -> Model:
     model.compile(
         optimizer = tf.keras.optimizers.AdamW(
                         learning_rate = learning_rate,
-                        weight_decay  = ENetConfig.WEIGHT_DECAY,
+                        weight_decay  = 1e-2,
                         beta_1        = 0.9,
                         beta_2        = 0.999,
                         epsilon       = 1e-7,
@@ -164,18 +151,18 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
     # ── Phase 1 : Warm-up
     print("=" * 55)
     print("  Phase 1 — Warm-up  (backbone gelé)")
-    print(f"  AdamW lr={ENetConfig.LR_WARMUP} | "
-          f"{ENetConfig.EPOCHS_WARMUP} epochs max")
+    print(f"  AdamW lr={LR_WARMUP} | "
+          f"{EPOCHS_WARMUP} epochs max")
     print("=" * 55)
 
     model = build_damage_efficientnet(freeze_backbone=True)
-    model = compile_efficientnet(model, ENetConfig.LR_WARMUP)
+    model = compile_efficientnet(model, LR_WARMUP)
     model.summary()
 
     history_warmup = model.fit(
         train_ds,
         validation_data = val_ds,
-        epochs          = ENetConfig.EPOCHS_WARMUP,
+        epochs          = EPOCHS_WARMUP,
         class_weight    = class_weights,
         callbacks       = get_callbacks(phase="warmup"),
         verbose         = 1,
@@ -184,8 +171,8 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
     # ── Phase 2 : Fine-tuning
     print("\n" + "=" * 55)
     print("  Phase 2 — Fine-tuning  (backbone partiellement dégelé)")
-    print(f"  AdamW lr={ENetConfig.LR_FINETUNE} | "
-          f"{ENetConfig.EPOCHS_FINETUNE} epochs max")
+    print(f"  AdamW lr={LR_FINETUNE} | "
+          f"{EPOCHS_FINETUNE} epochs max")
     print("=" * 55)
 
     # Localiser le backbone dans le modèle
@@ -199,7 +186,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
 
         # Geler toutes les couches SAUF les N dernières
         n_layers     = len(backbone_layer.layers)
-        freeze_until = n_layers - ENetConfig.UNFREEZE_LAYERS
+        freeze_until = n_layers - UNFREEZE_LAYERS
 
         for i, layer in enumerate(backbone_layer.layers):
             layer.trainable = (i >= freeze_until)
@@ -213,12 +200,12 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         model.trainable = True
 
     # Recompiler obligatoire après modification de trainable
-    model = compile_efficientnet(model, ENetConfig.LR_FINETUNE)
+    model = compile_efficientnet(model, LR_FINETUNE)
 
     history_finetune = model.fit(
         train_ds,
         validation_data = val_ds,
-        epochs          = ENetConfig.EPOCHS_FINETUNE,
+        epochs          = EPOCHS_FINETUNE,
         class_weight    = class_weights,
         callbacks       = get_callbacks(phase="finetune"),
         verbose         = 1,
@@ -308,7 +295,7 @@ def build_damage_cnn_concat(input_shape=(128, 128, 6)):
     x = layers.Dense(256, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc1")(x)
     x = layers.BatchNormalization(name="fc1_bn")(x)
     x = layers.ReLU(name="fc1_relu")(x)
-    x = layers.Dropout(DROPOUT_RATE, name="fc1_drop")(x)
+    x = layers.Dropout(0.5, name="fc1_drop")(x)
 
     x = layers.Dense(128, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc2")(x)
     x = layers.BatchNormalization(name="fc2_bn")(x)
@@ -416,7 +403,7 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
     x = layers.Dense(256, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc1")(x)
     x = layers.BatchNormalization(name="fc1_bn")(x)
     x = layers.ReLU(name="fc1_relu")(x)
-    x = layers.Dropout(DROPOUT_RATE, name="fc1_drop")(x)
+    x = layers.Dropout(0.5, name="fc1_drop")(x)
 
     x = layers.Dense(128, kernel_regularizer=regularizers.l2(WEIGHT_DECAY), name="fc2")(x)
     x = layers.BatchNormalization(name="fc2_bn")(x)
