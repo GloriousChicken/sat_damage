@@ -26,9 +26,10 @@ VAL_DIR   = "data/val"
 TEST_DIR  = "data/test"
 
 # Entraînement
-LEARNING_RATE = 5e-4
+LEARNING_RATE = 2e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
+FOCAL_GAMMA   = 2.0
 
 # Sauvegarde
 CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
