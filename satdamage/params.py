@@ -57,7 +57,7 @@ GAR_IMAGE = os.environ.get("GAR_IMAGE")
 GAR_MEMORY = os.environ.get("GAR_MEMORY")
 
 ##################  CONSTANTS  #####################
-LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "training_outputs")
+LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), "code", "GloriousChicken", "sat_damage", "checkpoints")
 
 ##################  VALIDATIONS  ################
 
