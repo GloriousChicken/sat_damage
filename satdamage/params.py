@@ -16,7 +16,7 @@ VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
-EPOCHS        = 50
+EPOCHS        = 100
 SOURCE_SPLITS = ["train", "tier3"]
 
 # Chemins xView2
@@ -30,7 +30,7 @@ WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
 # Model selection
-MODEL_ARCHITECTURE = "cnn_concat"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
