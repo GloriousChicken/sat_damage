@@ -1,5 +1,4 @@
 import os
-
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -26,13 +25,16 @@ VAL_DIR   = "data/val"
 TEST_DIR  = "data/test"
 
 # Entraînement
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 
+# Model selection
+MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+
 # Sauvegarde
-CHECKPOINT_PATH = "checkpoints/cnn_damage_best.keras"
-LOG_DIR         = "logs/cnn_damage"
+CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
+LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
@@ -60,7 +62,7 @@ LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), ".lewagon", "mlops"
 ##################  VALIDATIONS  ################
 
 env_valid_options = dict(
-    MODEL_TARGET=["local", "gcs", "mlflow"]
+    MODEL_TARGET=["local", "gcs"]
 )
 
 def validate_env_value(env, valid_options):
