@@ -118,12 +118,12 @@ if __name__ == "__main__":
         "val_auc":              0.0,
         "best_epoch":           0,
         "dataset":              "xBD challenge full",
-        "model":                "CNN dual-stream siamese binary v3",
+        "model":                "CNN dual-stream siamese binary v4",
         "crop_size":            128,
         "notes":                "dual-stream residual+SE, binary, crop-level stratified split"
     }
     os.makedirs("metrics", exist_ok=True)
-    with open("metrics/run_cnn_dual_v3.json", "w") as f:
+    with open("metrics/run_cnn_dual_v4.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")

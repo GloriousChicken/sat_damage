@@ -475,18 +475,23 @@ def _augment(image: tf.Tensor, label: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
 # ─────────────────────────────────────────────
 
 def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
-    """Load a saved combined (128x256) PNG and split back into pre+post as 6-channel."""
-    img = tf.io.read_file(path)
-    img = tf.image.decode_png(img, channels=3)
-    img = tf.cast(img, tf.float32) / 255.0
-    img = tf.image.resize(img, [CROP_SIZE[0], CROP_SIZE[1] * 2])  # ensure (128, 256, 3)
+    """Load a saved combined (128x256) PNG and split back into pre+post as 6-channel.
+    Returns zeros + label=-1 for corrupted/malformed files (filtered downstream).
+    """
+    try:
+        img = tf.io.read_file(path)
+        img = tf.image.decode_png(img, channels=3)
+        img = tf.cast(img, tf.float32) / 255.0
+        img = tf.image.resize(img, [CROP_SIZE[0], CROP_SIZE[1] * 2])
 
-    pre  = img[:, :CROP_SIZE[1], :]   # (128, 128, 3)
-    post = img[:, CROP_SIZE[1]:, :]   # (128, 128, 3)
+        pre  = img[:, :CROP_SIZE[1], :]
+        post = img[:, CROP_SIZE[1]:, :]
 
-    combined = tf.concat([pre, post], axis=-1)  # (128, 128, 6)
-    combined = tf.image.resize(combined, CROP_SIZE)
-    return combined, tf.cast(label, tf.float32)
+        combined = tf.concat([pre, post], axis=-1)
+        combined = tf.image.resize(combined, CROP_SIZE)
+        return combined, tf.cast(label, tf.float32)
+    except Exception:
+        return tf.zeros((*CROP_SIZE, 6), dtype=tf.float32), tf.constant(-1.0)
 
 
 def build_dataset_from_dir(
@@ -529,6 +534,8 @@ def build_dataset_from_dir(
         ),
         num_parallel_calls=tf.data.AUTOTUNE
     )
+
+    ds = ds.filter(lambda img, lbl: lbl >= 0)
 
     ds = ds.map(
         lambda img, lbl: (
