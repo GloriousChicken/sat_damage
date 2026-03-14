@@ -395,15 +395,15 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
     # ── Siamese encoder (identical structure, independent weights for pre and post)
     def encoder(x, prefix):
         # Stage 1 — 32 filters, 64×64
-        x = res_block(x, 32,  dropout=0.25, name=f"{prefix}_s1")
+        x = res_block(x, 32,  dropout=0.35, name=f"{prefix}_s1")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool1")(x)
 
         # Stage 2 — 64 filters, 32×32
-        x = res_block(x, 64,  dropout=0.25, name=f"{prefix}_s2")
+        x = res_block(x, 64,  dropout=0.35, name=f"{prefix}_s2")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool2")(x)
 
         # Stage 3 — 128 filters, 16×16
-        x = res_block(x, 128, dropout=0.35, name=f"{prefix}_s3")
+        x = res_block(x, 128, dropout=0.45, name=f"{prefix}_s3")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool3")(x)
         return x  # (batch, 16, 16, 128)
 
@@ -487,15 +487,15 @@ def get_callbacks(phase: str = "warmup"):
             monitor=monitor,
             mode="max",
             min_delta=1e-3,
-            patience=patience_es,
+            patience=20,           # was 12 — more room to train
             start_from_epoch=5,
             restore_best_weights=True,
             verbose=1
         ),
         ReduceLROnPlateau(
             monitor=monitor,
-            factor=0.5,
-            patience=patience_lr,
+            factor=0.7,
+            patience=6,            # was 4 — give more room before cutting LR
             min_delta=5e-4,
             cooldown=1,
             min_lr=1e-6,
