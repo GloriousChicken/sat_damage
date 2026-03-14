@@ -479,6 +479,7 @@ def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
     img = tf.io.read_file(path)
     img = tf.image.decode_png(img, channels=3)
     img = tf.cast(img, tf.float32) / 255.0
+    img = tf.image.resize(img, [CROP_SIZE[0], CROP_SIZE[1] * 2])  # ensure (128, 256, 3)
 
     pre  = img[:, :CROP_SIZE[1], :]   # (128, 128, 3)
     post = img[:, CROP_SIZE[1]:, :]   # (128, 128, 3)
