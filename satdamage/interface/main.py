@@ -101,7 +101,7 @@ if __name__ == "__main__":
     if MODEL_ARCHITECTURE == "efficientnet":
         model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds)
     elif MODEL_ARCHITECTURE in ("cnn_dual", "cnn_concat"):
-        model, history = train(train_ds, val_ds, class_weight=class_weights)
+        model, history = train(train_ds, val_ds)
     else:
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
@@ -118,12 +118,12 @@ if __name__ == "__main__":
         "val_auc":              0.0,
         "best_epoch":           0,
         "dataset":              "xBD challenge full",
-        "model":                "CNN dual-stream siamese binary v4",
+        "model":                "CNN dual-stream siamese binary v5",
         "crop_size":            128,
         "notes":                "dual-stream residual+SE, binary, crop-level stratified split"
     }
     os.makedirs("metrics", exist_ok=True)
-    with open("metrics/run_cnn_dual_v4.json", "w") as f:
+    with open("metrics/run_cnn_dual_v5.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
