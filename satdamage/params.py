@@ -29,7 +29,7 @@ EPOCHS        = 60
 LEARNING_RATE = 1e-4   # was 2e-4; halved — effective LR with class_weight≈1.82 was too aggressive
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
-FOCAL_GAMMA   = 0.0   # plain BCE — class_weight handles imbalance; focal no longer needed
+FOCAL_GAMMA   = 2.0   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
 MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"

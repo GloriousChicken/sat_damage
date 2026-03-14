@@ -540,7 +540,7 @@ def train(train_ds, val_ds, class_weight=None):
         epochs=EPOCHS,
         class_weight=class_weight,
         callbacks=get_callbacks(),
-        verbose=1
+        verbose=2          # was 1; \r updates break tail -f
     )
     return model, history
 
