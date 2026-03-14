@@ -25,14 +25,14 @@ LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
 UNFREEZE_LAYERS = 40
 
 # CNN parameters
-EPOCHS        = 2
+EPOCHS        = 60
 LEARNING_RATE = 2e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 FOCAL_GAMMA   = 2.0
 
 # Model selection
-MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_ARCHITECTURE = "cnn_concat"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
