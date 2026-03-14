@@ -478,9 +478,15 @@ def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
     """Load a saved combined (128x256) PNG and split back into pre+post as 6-channel.
     Returns zeros + label=-1 for corrupted/malformed files (filtered downstream).
     """
+    _sentinel = (tf.zeros((*CROP_SIZE, 6), dtype=tf.float32), tf.constant(-1.0))
     try:
         img = tf.io.read_file(path)
         img = tf.image.decode_png(img, channels=3)
+
+        # Guard: must be 3-D with positive height and width
+        if img.shape.rank != 3 or img.shape[0] == 0 or img.shape[1] == 0:
+            return _sentinel
+
         img = tf.cast(img, tf.float32) / 255.0
         img = tf.image.resize(img, [CROP_SIZE[0], CROP_SIZE[1] * 2])
 
@@ -491,7 +497,7 @@ def _parse_image(path: str, label: int) -> Tuple[tf.Tensor, tf.Tensor]:
         combined = tf.image.resize(combined, CROP_SIZE)
         return combined, tf.cast(label, tf.float32)
     except Exception:
-        return tf.zeros((*CROP_SIZE, 6), dtype=tf.float32), tf.constant(-1.0)
+        return _sentinel
 
 
 def build_dataset_from_dir(
@@ -537,6 +543,11 @@ def build_dataset_from_dir(
     )
 
     ds = ds.filter(lambda img, lbl: lbl >= 0)
+
+    # Hard runtime shape guard — drop any element where py_function returned
+    # a malformed tensor (C++ errors can bypass Python try/except).
+    _expected_shape = tf.constant([CROP_SIZE[0], CROP_SIZE[1], 6], dtype=tf.int32)
+    ds = ds.filter(lambda img, lbl: tf.reduce_all(tf.equal(tf.shape(img), _expected_shape)))
 
     ds = ds.map(
         lambda img, lbl: (
