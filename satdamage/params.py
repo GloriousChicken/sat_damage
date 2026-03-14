@@ -29,7 +29,7 @@ EPOCHS        = 60
 LEARNING_RATE = 2e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
-FOCAL_GAMMA   = 2.0
+FOCAL_GAMMA   = 0.5   # reduce: balanced sampling already handles class imbalance
 
 # Model selection
 MODEL_ARCHITECTURE = "cnn_dual"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
