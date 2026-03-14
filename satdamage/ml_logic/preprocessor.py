@@ -528,8 +528,7 @@ def build_dataset_from_dir(
 
     if training:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels)) \
-                .shuffle(len(paths), seed=RANDOM_SEED) \
-                .repeat()
+                .shuffle(len(paths), reshuffle_each_iteration=True)
     else:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels))
 
@@ -544,11 +543,6 @@ def build_dataset_from_dir(
 
     ds = ds.filter(lambda img, lbl: lbl >= 0)
 
-    # Hard runtime shape guard — drop any element where py_function returned
-    # a malformed tensor (C++ errors can bypass Python try/except).
-    _expected_shape = tf.constant([CROP_SIZE[0], CROP_SIZE[1], 6], dtype=tf.int32)
-    ds = ds.filter(lambda img, lbl: tf.reduce_all(tf.equal(tf.shape(img), _expected_shape)))
-
     ds = ds.map(
         lambda img, lbl: (
             tf.ensure_shape(img, (*CROP_SIZE, 6)),
@@ -560,9 +554,6 @@ def build_dataset_from_dir(
         ds = ds.map(_augment, num_parallel_calls=tf.data.AUTOTUNE)
 
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
-    if training:
-        import math
-        ds.steps_per_epoch = math.ceil(len(paths) / batch_size)
     return ds
 
 
