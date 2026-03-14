@@ -522,7 +522,8 @@ def build_dataset_from_dir(
 
     if training:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels)) \
-                .shuffle(len(paths), seed=RANDOM_SEED)
+                .shuffle(len(paths), seed=RANDOM_SEED) \
+                .repeat()
     else:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels))
 
@@ -548,6 +549,9 @@ def build_dataset_from_dir(
         ds = ds.map(_augment, num_parallel_calls=tf.data.AUTOTUNE)
 
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    if training:
+        import math
+        ds.steps_per_epoch = math.ceil(len(paths) / batch_size)
     return ds
 
 
