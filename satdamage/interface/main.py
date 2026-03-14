@@ -114,6 +114,24 @@ if __name__ == "__main__":
     print("Train done \n")
 
     evaluate(model, test_ds)
+
+    import json, os
+    metrics = {
+        "f1_damaged":           0.0,    # fill after training
+        "precision_damaged":    0.0,
+        "recall_damaged":       0.0,
+        "accuracy":             0.0,
+        "val_auc":              0.0,
+        "best_epoch":           0,
+        "dataset":              "xBD challenge full",
+        "model":                "CNN dual-stream siamese binary",
+        "crop_size":            128,
+        "notes":                "dual-stream residual+SE, binary, crop-level stratified split"
+    }
+    os.makedirs("metrics", exist_ok=True)
+    with open("metrics/run_cnn_dual_v1.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
 
     # explicit cleanup to avoid AtomicFunction __del__ noise at interpreter shutdown
