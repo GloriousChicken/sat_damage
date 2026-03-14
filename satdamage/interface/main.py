@@ -67,12 +67,11 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     extract_crops_to_disk(val_pairs,   crops_dir, "val",   max_workers=MAX_WORKERS)
     extract_crops_to_disk(test_pairs,  crops_dir, "test",  max_workers=MAX_WORKERS)
 
-    # ── 4. Class weights (informatif uniquement — le rééquilibrage est fait
-    #       par balanced sampling dans build_dataset_from_dir)
-    print("\n[4/5] Distribution des classes (info)...")
+    # ── 4. Class weights — passed to model.fit() to compensate for imbalance
+    print("\n[4/5] Distribution des classes (class_weight)...")
     class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
-    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}  (sklearn balanced, pour info)")
-    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}  (balanced sampling actif)")
+    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
+    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
 
     # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
     print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
@@ -84,12 +83,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
 
-    # steps_per_epoch: 2 passes through the minority class per epoch
-    n_damaged = len(list((Path(crops_dir) / "train" / "1").glob("*.png")))
-    steps_per_epoch = (2 * n_damaged) // BATCH_SIZE
-    print(f"[INFO] steps_per_epoch = {steps_per_epoch} (2 × {n_damaged} damaged / {BATCH_SIZE})")
-
-    return train_ds, val_ds, test_ds, steps_per_epoch
+    return train_ds, val_ds, test_ds, class_weights
 
 
 # ─────────────────────────────────────────────
@@ -98,7 +92,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
 if __name__ == "__main__":
 
-    train_ds, val_ds, test_ds, steps_per_epoch = build_xview2_datasets(
+    train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
         xview2_root=DATA_DIR,
         crops_dir=CROPS_DIR,
     )
@@ -107,7 +101,7 @@ if __name__ == "__main__":
     if MODEL_ARCHITECTURE == "efficientnet":
         model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds)
     elif MODEL_ARCHITECTURE in ("cnn_dual", "cnn_concat"):
-        model, history = train(train_ds, val_ds, steps_per_epoch=steps_per_epoch)
+        model, history = train(train_ds, val_ds, class_weight=class_weights)
     else:
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
@@ -124,12 +118,12 @@ if __name__ == "__main__":
         "val_auc":              0.0,
         "best_epoch":           0,
         "dataset":              "xBD challenge full",
-        "model":                "CNN dual-stream siamese binary v2",
+        "model":                "CNN dual-stream siamese binary v3",
         "crop_size":            128,
         "notes":                "dual-stream residual+SE, binary, crop-level stratified split"
     }
     os.makedirs("metrics", exist_ok=True)
-    with open("metrics/run_cnn_dual_v2.json", "w") as f:
+    with open("metrics/run_cnn_dual_v3.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
