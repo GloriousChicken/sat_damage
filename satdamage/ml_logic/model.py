@@ -519,12 +519,10 @@ def get_callbacks(phase: str = "warmup"):
 # 3. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
-def train(train_ds, val_ds, steps_per_epoch=None):
+def train(train_ds, val_ds, class_weight=None):
     """
-    Entraîne le modèle CNN. Le rééquilibrage des classes est géré par le
-    balanced sampling dans build_dataset_from_dir() — class_weight n'est
-    donc pas utilisé pour éviter une double correction.
-    steps_per_epoch doit être fourni quand train_ds est infini (balanced sampling).
+    Entraîne le modèle CNN. Balanced sampling replaced by class_weight —
+    real distribution during training, gradient re-weighting compensates for imbalance.
     """
     if MODEL_ARCHITECTURE == "cnn_concat":
         model = build_damage_cnn_concat()
@@ -540,7 +538,7 @@ def train(train_ds, val_ds, steps_per_epoch=None):
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        steps_per_epoch=steps_per_epoch,
+        class_weight=class_weight,
         callbacks=get_callbacks(),
         verbose=1
     )
