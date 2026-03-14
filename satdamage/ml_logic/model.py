@@ -534,10 +534,12 @@ def train(train_ds, val_ds, class_weight=None):
     model = compile_model(model)
     model.summary()
 
+    steps_per_epoch = getattr(train_ds, 'steps_per_epoch', None)
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
+        steps_per_epoch=steps_per_epoch,
         class_weight=class_weight,
         callbacks=get_callbacks(),
         verbose=2          # was 1; \r updates break tail -f
