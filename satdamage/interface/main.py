@@ -118,12 +118,12 @@ if __name__ == "__main__":
         "val_auc":              0.0,
         "best_epoch":           0,
         "dataset":              "xBD challenge full",
-        "model":                "CNN dual-stream siamese binary v5",
+        "model":                f"EfficientNetV2B0 binary v1" if MODEL_ARCHITECTURE == "efficientnet" else "CNN dual-stream siamese binary v5",
         "crop_size":            128,
-        "notes":                "dual-stream residual+SE, binary, crop-level stratified split"
+        "notes":                "EfficientNetV2B0 2-phase warmup+finetune, focal loss, no class_weight" if MODEL_ARCHITECTURE == "efficientnet" else "dual-stream residual+SE, binary, crop-level stratified split"
     }
     os.makedirs("metrics", exist_ok=True)
-    with open("metrics/run_cnn_dual_v5.json", "w") as f:
+    with open(f"metrics/run_{MODEL_ARCHITECTURE}_v1.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
