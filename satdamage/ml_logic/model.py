@@ -133,7 +133,8 @@ def compile_efficientnet(model: Model, learning_rate: float) -> Model:
                         beta_2        = 0.999,
                         epsilon       = 1e-7,
         ),
-        loss      = tf.keras.losses.BinaryCrossentropy(
+        loss      = tf.keras.losses.BinaryFocalCrossentropy(
+                        gamma=FOCAL_GAMMA,
                         label_smoothing=0.05
         ),
         metrics   = [
@@ -186,9 +187,8 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data = val_ds,
         epochs          = EPOCHS_WARMUP,
-        class_weight    = class_weights,
         callbacks       = get_callbacks(phase="warmup"),
-        verbose         = 1,
+        verbose         = 2,
     )
 
     # ── Phase 2 : Fine-tuning
@@ -229,9 +229,8 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data = val_ds,
         epochs          = EPOCHS_FINETUNE,
-        class_weight    = class_weights,
         callbacks       = get_callbacks(phase="finetune"),
-        verbose         = 1,
+        verbose         = 2,
     )
 
     return model, history_warmup, history_finetune
