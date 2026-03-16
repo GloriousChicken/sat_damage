@@ -2,7 +2,9 @@ import glob
 import os
 import time
 import json
+import tempfile
 
+from io import BytesIO
 from colorama import Fore, Style
 from tensorflow import keras
 from google.cloud import storage
@@ -79,7 +81,6 @@ def load_model(model_name: str) -> keras.Model:
 
         # Get the latest model version name by the timestamp on disk
         local_model_directory = LOCAL_REGISTRY_PATH
-        # local_model_directory = os.path.join(LOCAL_REGISTRY_PATH, "checkpoints")
         local_model_paths = glob.glob(f"{local_model_directory}/*{model_name}*.h5")
 
         if not local_model_paths:
@@ -103,15 +104,33 @@ def load_model(model_name: str) -> keras.Model:
             blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
             if model_name in blob.name
         ]
+        # print(blobs)
 
         try:
             latest_blob = max(blobs, key=lambda x: x.updated)
+
+            # Télécharger en mémoire sans toucher le disque
+            buffer = BytesIO()
+            # print("Buffer initialisé pour le téléchargement du modèle depuis GCS...")
+            latest_blob.download_to_file(buffer)
+            # print("Modèle téléchargé dans le buffer depuis GCS.")
+            buffer.seek(0)
+            # print("Buffer prêt pour le chargement du modèle avec Keras.")
+
             # print(f"Latest model in GCS bucket {BUCKET_NAME} is {latest_blob.name}, updated at {latest_blob.updated}")
-            latest_model_path_to_save = os.path.join(LOCAL_REGISTRY_PATH, latest_blob.name)
-            # print(f"Downloading latest model to {latest_model_path_to_save}...")
-            latest_blob.download_to_filename(latest_model_path_to_save)
-            latest_model = keras.models.load_model(latest_model_path_to_save)
-            # print(f"{latest_model.name} model loaded from GCS bucket {BUCKET_NAME}")
+            with tempfile.NamedTemporaryFile(suffix=".keras", delete=False) as tmp:
+                tmp.write(buffer.read())
+                tmp_path = tmp.name
+
+            try:
+                latest_model = keras.models.load_model(tmp_path)
+                print(f"{latest_model.name} model loaded from GCS bucket {BUCKET_NAME}")
+            except Exception as e:
+                print(f"Erreur lors du chargement du modèle : {type(e).__name__}: {e}")
+                raise
+            finally:
+                os.remove(tmp_path)  # nettoyage garanti même en cas d'erreur
+
             print("✅ Latest model downloaded from cloud storage")
 
             return latest_model
