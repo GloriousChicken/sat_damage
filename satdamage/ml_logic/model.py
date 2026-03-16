@@ -9,6 +9,7 @@ import numpy as np
 import os
 from datetime import datetime
 import tensorflow as tf
+import keras
 from tensorflow.keras import layers, Model, regularizers
 from tensorflow.keras.applications import EfficientNetV2B0
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
@@ -106,50 +107,19 @@ def build_damage_efficientnet(input_shape=(128, 128, 6), freeze_backbone = True)
     x = layers.Dense(256, activation="relu", name="fc1")(x)
     x = layers.Dropout(0.3, name="fc1_drop")(x)
 
-    outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+    if MODEL_MODE == "multiclass":
+        # Sortie softmax 4 classes
+        outputs = layers.Dense(NUM_CLASSES, activation="softmax", name="output")(x)
+    else:
+        outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+
+
 
     return Model(inputs, outputs,
                  name="EfficientNetV2B0_DamageClassifier")
 
 # ─────────────────────────────────────────────
-# 2. COMPILATION & CALLBACKS
-# ─────────────────────────────────────────────
-
-def compile_efficientnet(model: Model, learning_rate: float) -> Model:
-    """
-    Compile avec AdamW et métriques binaires.
-    Appelée deux fois : une fois au warm-up, une fois au fine-tuning.
-
-    label_smoothing=0.05 :
-        Adoucit les targets 0→0.05 et 1→0.95.
-        Réduit la confiance excessive du modèle sur un dataset bruité
-        (les annotations xView2 contiennent des erreurs de labeling).
-    """
-    model.compile(
-        optimizer = tf.keras.optimizers.AdamW(
-                        learning_rate = learning_rate,
-                        weight_decay  = 1e-2,
-                        beta_1        = 0.9,
-                        beta_2        = 0.999,
-                        epsilon       = 1e-7,
-        ),
-        loss      = tf.keras.losses.BinaryFocalCrossentropy(
-                        gamma=FOCAL_GAMMA,
-                        label_smoothing=0.05
-        ),
-        metrics   = [
-            tf.keras.metrics.BinaryAccuracy(name="accuracy"),
-            tf.keras.metrics.Precision(name="precision"),
-            tf.keras.metrics.Recall(name="recall"),
-            tf.keras.metrics.AUC(name="auc"),
-            tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
-            # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
-        ]
-    )
-    return model
-
-# ─────────────────────────────────────────────
-# 3. ENTRAÎNEMENT EN 2 PHASES
+# 2. ENTRAÎNEMENT EN 2 PHASES
 # ─────────────────────────────────────────────
 
 def train_efficientnet(train_ds, val_ds, class_weights=None):
@@ -180,7 +150,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
     print("=" * 55)
 
     model = build_damage_efficientnet(freeze_backbone=True)
-    model = compile_efficientnet(model, LR_WARMUP)
+    model = compile_model(model, LR_WARMUP)
     model.summary()
 
     history_warmup = model.fit(
@@ -223,7 +193,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         model.trainable = True
 
     # Recompiler obligatoire après modification de trainable
-    model = compile_efficientnet(model, LR_FINETUNE)
+    model = compile_model(model, LR_FINETUNE)
 
     history_finetune = model.fit(
         train_ds,
@@ -260,7 +230,7 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
 
 
 # ─────────────────────────────────────────────
-# 2.1 6 CHANNELS CONCATENATION
+# 1.1 6 CHANNELS CONCATENATION
 # ─────────────────────────────────────────────
 
 def build_damage_cnn_concat(input_shape=(128, 128, 6)):
@@ -324,8 +294,12 @@ def build_damage_cnn_concat(input_shape=(128, 128, 6)):
     x = layers.ReLU(name="fc2_relu")(x)
     x = layers.Dropout(0.3, name="fc2_drop")(x)
 
-    # Sortie binaire
-    outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+    if MODEL_MODE == "multiclass":
+        # Sortie softmax 4 classes
+        outputs = layers.Dense(NUM_CLASSES, activation="softmax", name="output")(x)
+    else:
+        # Sortie binaire
+        outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
 
     model = Model(inputs, outputs, name="CNN_DamageClassifier")
     return model
@@ -333,7 +307,7 @@ def build_damage_cnn_concat(input_shape=(128, 128, 6)):
 
 
 # ─────────────────────────────────────────────
-# 2.2 DUAL STREAM
+# 1.2 DUAL STREAM
 # ─────────────────────────────────────────────
 
 def se_block(x, reduction=16, name="se"):
@@ -432,7 +406,12 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
     x = layers.ReLU(name="fc2_relu")(x)
     x = layers.Dropout(0.3, name="fc2_drop")(x)
 
-    outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
+    if MODEL_MODE == "multiclass":
+        # Sortie softmax 4 classes
+        outputs = layers.Dense(NUM_CLASSES, activation="softmax", name="output")(x)
+    else:
+        # Sortie binaire
+        outputs = layers.Dense(1, activation="sigmoid", name="output")(x)
 
     return Model(inputs, outputs, name="CNN_DualStream_DamageClassifier")
 
@@ -440,22 +419,39 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
 # 2. COMPILATION & CALLBACKS
 # ─────────────────────────────────────────────
 
-def compile_model(model):
-    model.compile(
-        optimizer=tf.keras.optimizers.AdamW(
-            learning_rate=LEARNING_RATE
-        ),
-        # loss=tf.keras.losses.BinaryCrossentropy(),
-        loss=tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA),
-        metrics=[
-            tf.keras.metrics.BinaryAccuracy(name="accuracy"),
-            tf.keras.metrics.Precision(name="precision"),
-            tf.keras.metrics.Recall(name="recall"),
-            tf.keras.metrics.AUC(name="auc"),
-            tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
-            BinaryF1Score(threshold=0.5, name="f1")
-            ]
+def compile_model(model: Model, learning_rate: float) -> Model:
+    """
+    Compile avec AdamW et métriques.
+    Appelée deux fois pour EfficientNet : une fois au warm-up, une fois au fine-tuning.
+    """
+    opt = tf.keras.optimizers.AdamW(
+        learning_rate = learning_rate,
+        weight_decay  = 1e-2,
+        beta_1        = 0.9,
+        beta_2        = 0.999,
+        epsilon       = 1e-7,
     )
+    met = [
+        tf.keras.metrics.Precision(name="precision"),
+        tf.keras.metrics.Recall(name="recall"),
+        tf.keras.metrics.AUC(name="auc"),
+        tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
+        # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
+        tf.keras.metrics.F1Score(name="f1", threshold=0.5, average="micro")
+    ]
+    if MODEL_MODE == "multiclass":
+        model.compile(
+            optimizer = opt,
+            loss      = tf.keras.losses.CategoricalFocalCrossentropy(gamma=1.0, from_logits=False),
+            metrics   = [tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")] + met
+        )
+    else:
+        model.compile(
+            optimizer = opt,
+            # loss      = tf.keras.losses.BinaryCrossentropy(),
+            loss      = tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA, label_smoothing=0.05),
+            metrics   = [tf.keras.metrics.BinaryAccuracy(name="accuracy")] + met
+        )
     return model
 
 def get_callbacks(phase: str = "warmup"):
@@ -530,7 +526,7 @@ def train(train_ds, val_ds, class_weight=None):
     else:
         raise ValueError(f"Architecture CNN inconnue: {MODEL_ARCHITECTURE}. Utilisez 'cnn_concat' ou 'cnn_dual'.")
 
-    model = compile_model(model)
+    model = compile_model(model, LEARNING_RATE)
     model.summary()
 
     history = model.fit(
@@ -569,33 +565,57 @@ def evaluate(model, test_ds, threshold=None):
     Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
     avant d'afficher le rapport final.
     """
-    y_true, y_prob = [], []
+    if MODEL_MODE == "multiclass":
+        y_true, y_prob_all = [], []
+        for images, labels in test_ds:
+            probs = model.predict(images, verbose=0)   # shape (batch, 4)
+            y_prob_all.extend(probs)
+            y_true.extend(labels.numpy())
 
-    for images, labels in test_ds:
-        preds = model.predict(images, verbose=0)
-        y_prob.extend(preds.flatten())
-        y_true.extend(labels.numpy())
+        y_prob_all = np.array(y_prob_all)
+        y_pred     = np.argmax(y_prob_all, axis=1)
+        y_true     = np.array(y_true, dtype=int)
 
-    y_true = np.array(y_true).astype(int)
-    y_pred_prob = np.array(y_prob)
+        print(f"\n── Rapport de classification {model.name} ──")
+        print(classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0))
 
-    if threshold is None:
-        threshold = find_best_threshold(y_true, y_pred_prob)
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        print("── Matrice de confusion ──")
+        print(f"  TN={tn:>5}  FP={fp:>5}")
+        print(f"  FN={fn:>5}  TP={tp:>5}")
+        f1_macro    = f1_score(y_true, y_pred, average="macro",    zero_division=0)
+        f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        print(f"F1 macro    : {f1_macro:.4f}   ← indicateur principal (classes déséquilibrées)")
+        print(f"F1 weighted : {f1_weighted:.4f}")
 
-    y_pred = (y_pred_prob >= threshold).astype(int)
+        return {
+            "y_true":       y_true,
+            "y_pred":       y_pred,
+            "y_prob":       y_prob_all,
+            "f1_macro":     f1_macro,
+            "f1_weighted":  f1_weighted,
+        }
 
-    print(f"\n── Rapport de classification (seuil={threshold:.2f}) ──")
-    print(classification_report(
-        y_true, y_pred,
-        target_names=["non-endommagé", "endommagé"]
-    ))
+    else:
+        y_true, y_prob = [], []
+        for images, labels in test_ds:
+            preds = model.predict(images, verbose=0)
+            y_prob.extend(preds.flatten())
+            y_true.extend(labels.numpy())
 
-    cm = confusion_matrix(y_true, y_pred)
-    tn, fp, fn, tp = cm.ravel()
-    print("── Matrice de confusion ──")
-    print(f"  TN={tn:>5}  FP={fp:>5}")
-    print(f"  FN={fn:>5}  TP={tp:>5}")
-    print(f"\nF1-score (endommagé) : {f1_score(y_true, y_pred, zero_division=0):.4f}")
-    print(f"Threshold utilisé    : {threshold}")
+        y_pred = (np.array(y_prob) >= threshold).astype(int)
+        y_true = np.array(y_true).astype(int)
 
-    return y_pred, y_pred_prob
+        print(f"\n── Rapport de classification {model.name} ──")
+        print(classification_report(y_true, y_pred, target_names=["no-damage", "damaged"]))
+
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        print("── Matrice de confusion ──")
+        print(f"  TN={tn:>5}  FP={fp:>5}")
+        print(f"  FN={fn:>5}  TP={tp:>5}")
+        print(f"\nF1-score  (damaged) : {f1_score(y_true, y_pred):.4f}")
+        print(f"Threshold utilisé    : {threshold}")
+
+        return y_pred, y_prob

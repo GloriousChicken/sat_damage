@@ -10,6 +10,7 @@ from PIL import Image
 from shapely.geometry import shape
 from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 from collections import Counter
 from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -112,28 +113,16 @@ def _crop_and_scale(image: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.nd
     return np.array(pil)
 
 
-def _polygon_to_bbox(polygon, w, h, padding=CROP_PADDING):
-    minx, miny, maxx, maxy = polygon.bounds
-    x_min = max(0, int(minx) - padding)
-    y_min = max(0, int(miny) - padding)
-    x_max = min(w, int(maxx) + padding)
-    y_max = min(h, int(maxy) + padding)
-    if (x_max - x_min) < 10 or (y_max - y_min) < 10:
-        return None
-    return x_min, y_min, x_max, y_max
-
-
-def polygon_to_pixel_bbox(polygon, image_width: int, image_height: int, padding: int = CROP_PADDING) -> Optional[Tuple[int, int, int, int]]:
+def _polygon_to_bbox(polygon, width: int, height: int, padding: int = CROP_PADDING) -> Optional[Tuple[int, int, int, int]]:
     """Convert a shapely polygon to a pixel bounding box with padding and clipping."""
     minx, miny, maxx, maxy = polygon.bounds
     x_min = max(0, int(minx) - padding)
     y_min = max(0, int(miny) - padding)
-    x_max = min(image_width,  int(maxx) + padding)
-    y_max = min(image_height, int(maxy) + padding)
+    x_max = min(width,  int(maxx) + padding)
+    y_max = min(height, int(maxy) + padding)
     if (x_max - x_min) < 10 or (y_max - y_min) < 10:
         return None
     return x_min, y_min, x_max, y_max
-
 
 def crop_building(
     image:       np.ndarray,
@@ -229,11 +218,11 @@ def process_image_pair(
 
     for building_pre, building_post in zip(buildings_pre, buildings_post):
         damage = building_post["damage"]
-        label  = DAMAGE_TO_BINARY.get(damage, None)
+        label = DAMAGE_TO_CLASS.get(damage, None) if MODEL_MODE == "multiclass" else DAMAGE_TO_BINARY.get(damage, None)
         if label is None:
             continue
-        bbox_pre  = polygon_to_pixel_bbox(building_pre["polygon"],  w, h)
-        bbox_post = polygon_to_pixel_bbox(building_post["polygon"], w, h)
+        bbox_pre  = _polygon_to_bbox(building_pre["polygon"],  w, h)
+        bbox_post = _polygon_to_bbox(building_post["polygon"], w, h)
         if bbox_pre is None or bbox_post is None:
             continue
         pre_crop  = crop_building(pre_img,  bbox_pre)
@@ -301,43 +290,6 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
 
     print(f"[INFO] {len(pairs)} paires d'images trouvees")
     return pairs
-
-
-# ─────────────────────────────────────────────
-# 5. SPLIT PAIRS BY EVENT (no leakage)
-# ─────────────────────────────────────────────
-
-def split_pairs_by_event(
-    pairs: List[Dict],
-    train_ratio: float = TRAIN_RATIO,
-    val_ratio:   float = VAL_RATIO,
-    seed:        int   = RANDOM_SEED,
-) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    from collections import defaultdict
-    import random
-
-    event_pairs = defaultdict(list)
-    for p in pairs:
-        event_pairs[p["event"]].append(p)
-
-    events = list(event_pairs.keys())
-    random.seed(seed)
-    random.shuffle(events)
-
-    n = len(events)
-    n_train = max(1, int(n * train_ratio))
-    n_val   = max(1, int(n * val_ratio))
-
-    train_events = events[:n_train]
-    val_events   = events[n_train:n_train + n_val]
-    test_events  = events[n_train + n_val:]
-
-    train_pairs = [p for e in train_events for p in event_pairs[e]]
-    val_pairs   = [p for e in val_events   for p in event_pairs[e]]
-    test_pairs  = [p for e in test_events  for p in event_pairs[e]]
-
-    print(f"[INFO] Event split -> Train: {len(train_pairs)} | Val: {len(val_pairs)} | Test: {len(test_pairs)} pairs")
-    return train_pairs, val_pairs, test_pairs
 
 
 # ─────────────────────────────────────────────
@@ -457,8 +409,73 @@ def extract_crops_to_disk(
 # 7. AUGMENTATION
 # ─────────────────────────────────────────────
 
-def _augment(image: tf.Tensor, label: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
-    """Applies random augmentations. Used by the lazy disk pipeline."""
+def split_samples(
+    samples: List[Tuple[np.ndarray, np.ndarray]],  # List of (pre_crop, post_crop)
+    labels: List[int],
+    train_ratio: float = TRAIN_RATIO,
+    val_ratio: float = VAL_RATIO,
+    seed: int = RANDOM_SEED
+) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[int], List[int], List[int]]:
+    """
+    Stratified split of samples (crops) into train, val, test sets.
+    Preserves label distribution using stratification.
+
+    Args:
+        samples: List of (pre_crop, post_crop) tuples.
+        labels: Corresponding list of labels.
+        train_ratio: Fraction for train.
+        val_ratio: Fraction for val.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
+    """
+
+    # First split: train + (val + test)
+    train_samples, temp_samples, train_labels, temp_labels = train_test_split(
+        samples, labels,
+        test_size=(1 - train_ratio),
+        stratify=labels,
+        random_state=seed
+    )
+
+    # Second split: val and test from the remainder
+    val_ratio_adjusted = val_ratio / (val_ratio + (1 - train_ratio - val_ratio))  # Normalize val_ratio for the temp set
+    val_samples, test_samples, val_labels, test_labels = train_test_split(
+        temp_samples, temp_labels,
+        test_size=(1 - val_ratio_adjusted),
+        stratify=temp_labels,
+        random_state=seed
+    )
+
+    print(f"\n[INFO] Stratified Split (Crop-Level):")
+    if MODEL_MODE == "multiclass":
+        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Minor-damage: {train_labels.count(1)}, Major-damage: {train_labels.count(2)}, Damaged: {train_labels.count(3)})")
+        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Minor-damage: {val_labels.count(1)}, Major-damage: {val_labels.count(2)}, Damaged: {val_labels.count(3)})")
+        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Minor-damage: {test_labels.count(1)}, Major-damage: {test_labels.count(2)}, Damaged: {test_labels.count(3)})")
+    else:
+        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
+        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
+        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
+
+    return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
+
+
+# ─────────────────────────────────────────────
+# 7. PRÉPROCESSING & DATA PIPELINE
+# ─────────────────────────────────────────────
+
+def preprocess_pair(pre_image, post_image, label):
+    """Concatenates and normalizes pre/post images."""
+    pre = tf.cast(pre_image, tf.float32) / 255.0
+    post = tf.cast(post_image, tf.float32) / 255.0
+    pre = tf.image.resize(pre, CROP_SIZE)
+    post = tf.image.resize(post, CROP_SIZE)
+    combined = tf.concat([pre, post], axis=-1)
+    return combined, label
+
+def augment(image, label):
+    """Applies basic augmentations."""
     image = tf.image.random_flip_left_right(image)
     image = tf.image.random_flip_up_down(image)
     k = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32)
@@ -551,7 +568,7 @@ def build_dataset_from_dir(
     )
 
     if training:
-        ds = ds.map(_augment, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
 
     ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     return ds
@@ -561,8 +578,32 @@ def build_dataset_from_dir(
 # 9. CLASS WEIGHTS
 # ─────────────────────────────────────────────
 
+def compute_class_weights(labels):
+    """
+    xView2 contient beaucoup plus de bâtiments non endommagés.
+    Les class weights compensent ce déséquilibre.
+    """
+    if MODEL_MODE == "multiclass":
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=np.array([0, 1, 2, 3]),
+            y=np.array(labels),
+        )
+        weight_dict = dict(enumerate(weights))
+        print("\n[INFO] Class weights calculés :")
+        for name, idx in DAMAGE_TO_CLASS.items():
+            bar = "▓" * int(weight_dict[idx])
+            print(f"  [{idx}] {name:<18} → {weight_dict[idx]:.3f}  {bar}")
+    else:
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=np.array([0, 1]),
+            y=labels
+        )
+        weight_dict = dict(enumerate(weights))
+    return weight_dict
+
 def compute_class_weights_from_dir(split_dir: str) -> Dict[int, float]:
-    from sklearn.utils.class_weight import compute_class_weight
     split_path = Path(split_dir)
     labels = []
     for label in [0, 1]:
@@ -577,3 +618,39 @@ def compute_class_weights_from_dir(split_dir: str) -> Dict[int, float]:
         y=np.array(labels)
     )
     return {0: float(weights[0]), 1: float(weights[1])}
+
+# ─────────────────────────────────────────────
+# 10. SPLIT PAIRS BY EVENT (no leakage)
+# ─────────────────────────────────────────────
+
+def split_pairs_by_event(
+    pairs: List[Dict],
+    train_ratio: float = TRAIN_RATIO,
+    val_ratio:   float = VAL_RATIO,
+    seed:        int   = RANDOM_SEED,
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    from collections import defaultdict
+    import random
+
+    event_pairs = defaultdict(list)
+    for p in pairs:
+        event_pairs[p["event"]].append(p)
+
+    events = list(event_pairs.keys())
+    random.seed(seed)
+    random.shuffle(events)
+
+    n = len(events)
+    n_train = max(1, int(n * train_ratio))
+    n_val   = max(1, int(n * val_ratio))
+
+    train_events = events[:n_train]
+    val_events   = events[n_train:n_train + n_val]
+    test_events  = events[n_train + n_val:]
+
+    train_pairs = [p for e in train_events for p in event_pairs[e]]
+    val_pairs   = [p for e in val_events   for p in event_pairs[e]]
+    test_pairs  = [p for e in test_events  for p in event_pairs[e]]
+
+    print(f"[INFO] Event split -> Train: {len(train_pairs)} | Val: {len(val_pairs)} | Test: {len(test_pairs)} pairs")
+    return train_pairs, val_pairs, test_pairs
