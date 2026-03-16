@@ -208,7 +208,7 @@ def process_image_pair(
 
     for building_pre, building_post in zip(buildings_pre, buildings_post):
         damage = building_post["damage"]
-        label = DAMAGE_TO_BINARY.get(damage, None)
+        label = DAMAGE_TO_CLASS.get(damage, None) if MODEL_MODE == "multiclass" else DAMAGE_TO_BINARY.get(damage, None)
         if label is None:
             continue
         bbox_pre = polygon_to_pixel_bbox(building_pre["polygon"], w, h)
@@ -425,7 +425,10 @@ def build_all_samples(
     if verbose:
         dist = Counter(labels)
         total = len(labels)
-        print(f"Samples: {total}, Errors: {errors}, Undamaged: {dist.get(0, 0)}, Damaged: {dist.get(1, 0)}")
+        if MODEL_MODE == "multiclass":
+            print(f"Samples: {total}, Errors: {errors}, Undamaged: {dist.get(0, 0)}, Minor-damage: {dist.get(1, 0)}, Major-damage: {dist.get(2, 0)}, Damaged: {dist.get(3, 0)}")
+        else:
+            print(f"Samples: {total}, Errors: {errors}, Undamaged: {dist.get(0, 0)}, Damaged: {dist.get(1, 0)}")
 
     return image_pairs, labels
 
@@ -474,9 +477,14 @@ def split_samples(
     )
 
     print(f"\n[INFO] Stratified Split (Crop-Level):")
-    print(f"  Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
-    print(f"  Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
-    print(f"  Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
+    if MODEL_MODE == "multiclass":
+        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Minor-damage: {train_labels.count(1)}, Major-damage: {train_labels.count(2)}, Damaged: {train_labels.count(3)})")
+        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Minor-damage: {val_labels.count(1)}, Major-damage: {val_labels.count(2)}, Damaged: {val_labels.count(3)})")
+        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Minor-damage: {test_labels.count(1)}, Major-damage: {test_labels.count(2)}, Damaged: {test_labels.count(3)})")
+    else:
+        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
+        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
+        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
 
     return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
 

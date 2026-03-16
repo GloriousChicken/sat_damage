@@ -8,9 +8,15 @@ DAMAGE_TO_BINARY = {
     "no-damage": 0,
     "minor-damage": 1,
     "major-damage": 1,
-    "destroyed": 1,
-    "un-classified": None
+    "destroyed": 1
 }
+DAMAGE_TO_CLASS = {
+    "no-damage": 0,
+    "minor-damage": 1,
+    "major-damage": 2,
+    "destroyed": 3
+}
+CLASS_NAMES = list(DAMAGE_TO_CLASS.keys())
 TRAIN_RATIO   = 0.70
 VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
@@ -31,6 +37,8 @@ WEIGHT_DECAY  = 1e-4
 
 # Model selection
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_MODE = "multiclass" # multiclass or binary
+NUM_CLASSES = len(DAMAGE_TO_CLASS)
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
