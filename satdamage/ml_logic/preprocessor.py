@@ -113,28 +113,16 @@ def _crop_and_scale(image: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.nd
     return np.array(pil)
 
 
-def _polygon_to_bbox(polygon, w, h, padding=CROP_PADDING):
-    minx, miny, maxx, maxy = polygon.bounds
-    x_min = max(0, int(minx) - padding)
-    y_min = max(0, int(miny) - padding)
-    x_max = min(w, int(maxx) + padding)
-    y_max = min(h, int(maxy) + padding)
-    if (x_max - x_min) < 10 or (y_max - y_min) < 10:
-        return None
-    return x_min, y_min, x_max, y_max
-
-
-def polygon_to_pixel_bbox(polygon, image_width: int, image_height: int, padding: int = CROP_PADDING) -> Optional[Tuple[int, int, int, int]]:
+def _polygon_to_bbox(polygon, width: int, height: int, padding: int = CROP_PADDING) -> Optional[Tuple[int, int, int, int]]:
     """Convert a shapely polygon to a pixel bounding box with padding and clipping."""
     minx, miny, maxx, maxy = polygon.bounds
     x_min = max(0, int(minx) - padding)
     y_min = max(0, int(miny) - padding)
-    x_max = min(image_width,  int(maxx) + padding)
-    y_max = min(image_height, int(maxy) + padding)
+    x_max = min(width,  int(maxx) + padding)
+    y_max = min(height, int(maxy) + padding)
     if (x_max - x_min) < 10 or (y_max - y_min) < 10:
         return None
     return x_min, y_min, x_max, y_max
-
 
 def crop_building(
     image:       np.ndarray,
@@ -233,8 +221,8 @@ def process_image_pair(
         label = DAMAGE_TO_CLASS.get(damage, None) if MODEL_MODE == "multiclass" else DAMAGE_TO_BINARY.get(damage, None)
         if label is None:
             continue
-        bbox_pre  = polygon_to_pixel_bbox(building_pre["polygon"],  w, h)
-        bbox_post = polygon_to_pixel_bbox(building_post["polygon"], w, h)
+        bbox_pre  = _polygon_to_bbox(building_pre["polygon"],  w, h)
+        bbox_post = _polygon_to_bbox(building_post["polygon"], w, h)
         if bbox_pre is None or bbox_post is None:
             continue
         pre_crop  = crop_building(pre_img,  bbox_pre)
