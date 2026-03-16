@@ -1,34 +1,24 @@
 import os
 import numpy as np
 import time
-from sklearn.utils.class_weight import compute_class_weight
-from satdamage.ml_logic.preprocessor import build_dataset, find_image_pairs, find_image_pairs_gcs, split_samples, build_all_samples
+from satdamage.ml_logic.preprocessor import find_image_pairs, find_image_pairs_gcs, split_samples, split_pairs_by_event
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
 from satdamage.ml_logic.registry import *
-from google.cloud import storage
 import gc
 import tensorflow as tf
 from pathlib import Path
 from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
     find_image_pairs_gcs,
-    split_pairs_by_event,
     extract_crops_to_disk,
     build_dataset_from_dir,
+    compute_class_weights,
     compute_class_weights_from_dir,
 )
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.params import MODEL_TARGET, DATA_DIR, BATCH_SIZE, MODEL_ARCHITECTURE
 from satdamage.ml_logic.registry import *
-
-# ─────────────────────────────────────────────
-# CONFIGURATION
-# ─────────────────────────────────────────────
-
-CROPS_DIR   = os.environ.get("CROPS_DIR", "/home/pierre/crops")
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 8))
-
 
 # ─────────────────────────────────────────────
 # PIPELINE COMPLET
@@ -66,6 +56,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     # ── 2. Split by event (no data leakage between disaster events)
     print("\n[2/5] Split par evenement (sans data leakage)...")
     train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs)
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 3. Extract crops to disk (lazy pipeline — idempotent)
     print("\n[3/5] Extraction des crops vers le disque...")
@@ -81,14 +72,16 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
     # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
     print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
+    start_time = time.time()
     train_ds = build_dataset_from_dir(str(Path(crops_dir) / "train"), training=True)
     val_ds   = build_dataset_from_dir(str(Path(crops_dir) / "val"),   training=False)
     test_ds  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    print("\n" + "=" * 55)
+    print("=" * 55)
     print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
-
     return train_ds, val_ds, test_ds, class_weights
 
 

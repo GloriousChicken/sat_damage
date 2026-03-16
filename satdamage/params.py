@@ -4,26 +4,25 @@ import os
 ##################  MAIN VARIABLES  #############
 CROP_SIZE        = (128, 128)
 CROP_PADDING     = 10
-MULTICLASS       = False
 DAMAGE_TO_BINARY = {
     "no-damage": 0,
     "minor-damage": 1,
     "major-damage": 1,
-    "destroyed": 1,
-    "un-classified": None
+    "destroyed": 1
 }
 DAMAGE_TO_CLASS = {
     "no-damage": 0,
     "minor-damage": 1,
     "major-damage": 2,
-    "destroyed": 3,
-    "un-classified": None
+    "destroyed": 3
 }
+CLASS_NAMES = list(DAMAGE_TO_CLASS.keys())
 TRAIN_RATIO   = 0.70
 VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
+MAX_WORKERS = 8
 
 # EfficientNet parameters
 EPOCHS_WARMUP   = 10
@@ -37,11 +36,13 @@ EPOCHS        = 50
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
-FOCAL_GAMMA   = 2.0   # was 0.0; re-enable focal — class_weight experiment failed
+FOCAL_GAMMA   = 1.0   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
 MODEL_NAMES = ["cnn_damage", "cnn_concat", "cnn_dual", "efficientnet"]
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_MODE = "multiclass" # multiclass or binary
+NUM_CLASSES = len(DAMAGE_TO_CLASS)
 
 # Sauvegarde
 CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
@@ -49,6 +50,7 @@ LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
+CROPS_DIR   = os.environ.get("CROPS_DIR", "data/crops")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
