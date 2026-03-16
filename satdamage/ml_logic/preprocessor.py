@@ -165,7 +165,7 @@ def _save_pair_crops(args):
 
         for b_idx, building in enumerate(buildings):
             damage = building["damage"]
-            label  = DAMAGE_TO_BINARY.get(damage, None)
+            label = DAMAGE_TO_CLASS.get(damage, None) if MODEL_MODE == "multiclass" else DAMAGE_TO_BINARY.get(damage, None)
             if label is None:
                 continue
 
