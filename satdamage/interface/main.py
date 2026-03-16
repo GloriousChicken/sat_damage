@@ -1,10 +1,4 @@
-import os
-import numpy as np
 import time
-from satdamage.ml_logic.preprocessor import find_image_pairs, find_image_pairs_gcs, split_samples, split_pairs_by_event
-from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
-from satdamage.ml_logic.registry import *
 import gc
 import tensorflow as tf
 from pathlib import Path
@@ -12,12 +6,12 @@ from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
     find_image_pairs_gcs,
     extract_crops_to_disk,
+    split_crops_dir_stratified,
     build_dataset_from_dir,
-    compute_class_weights,
     compute_class_weights_from_dir,
 )
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import MODEL_TARGET, DATA_DIR, BATCH_SIZE, MODEL_ARCHITECTURE
+from satdamage.params import CROPS_DIR, DATA_DIR, MAX_WORKERS, MODEL_ARCHITECTURE, MODEL_TARGET
 from satdamage.ml_logic.registry import *
 
 # ─────────────────────────────────────────────
@@ -28,8 +22,8 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     """
     Full pipeline:
         1. Scan image pairs
-        2. Split by event (no leakage)
-        3. Extract crops to disk (idempotent — skips if already done)
+        2. Extract all crops to disk (idempotent — skips if already done)
+        3. Stratified split of saved crops into train/val/test
         4. Compute class weights from disk
         5. Build lazy tf.data.Dataset
     """
@@ -53,16 +47,22 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # ── 2. Split by event (no data leakage between disaster events)
-    print("\n[2/5] Split par evenement (sans data leakage)...")
-    train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs)
+    # ── 2. Extract all crops to disk once
+    print("\n[2/5] Extraction de tous les crops vers le disque...")
+    start_time = time.time()
+    extract_crops_to_disk(all_pairs, crops_dir, "all", max_workers=MAX_WORKERS)
+    end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # ── 3. Extract crops to disk (lazy pipeline — idempotent)
-    print("\n[3/5] Extraction des crops vers le disque...")
-    extract_crops_to_disk(train_pairs, crops_dir, "train", max_workers=MAX_WORKERS)
-    extract_crops_to_disk(val_pairs,   crops_dir, "val",   max_workers=MAX_WORKERS)
-    extract_crops_to_disk(test_pairs,  crops_dir, "test",  max_workers=MAX_WORKERS)
+    # ── 3. Stratified split on saved crops to preserve label distribution
+    print("\n[3/5] Split stratifie des crops sauvegardes...")
+    start_time = time.time()
+    split_crops_dir_stratified(
+        source_dir=str(Path(crops_dir) / "all"),
+        out_dir=crops_dir,
+    )
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 4. Class weights — passed to model.fit() to compensate for imbalance
     print("\n[4/5] Distribution des classes (class_weight)...")
@@ -90,6 +90,8 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    if DATA_DIR is None:
+        raise ValueError("DATA_DIR environment variable must be set.")
 
     train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
         xview2_root=DATA_DIR,
