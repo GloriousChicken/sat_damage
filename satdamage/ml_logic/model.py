@@ -7,6 +7,7 @@ Input:   paires d'images pré/post-catastrophe (6 canaux)
 
 import numpy as np
 import os
+from datetime import datetime
 import tensorflow as tf
 import keras
 from tensorflow.keras import layers, Model, regularizers
@@ -14,6 +15,28 @@ from tensorflow.keras.applications import EfficientNetV2B0
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from satdamage.params import *
+
+
+class BinaryF1Score(tf.keras.metrics.Metric):
+    """F1 metric compatible with binary sigmoid output (None, 1) and flat labels (None,)."""
+    def __init__(self, threshold=0.5, name="f1", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.precision = tf.keras.metrics.Precision(thresholds=threshold)
+        self.recall    = tf.keras.metrics.Recall(thresholds=threshold)
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        self.precision.update_state(y_true, y_pred, sample_weight)
+        self.recall.update_state(y_true, y_pred, sample_weight)
+
+    def result(self):
+        p = self.precision.result()
+        r = self.recall.result()
+        return 2 * p * r / (p + r + tf.keras.backend.epsilon())
+
+    def reset_state(self):
+        self.precision.reset_state()
+        self.recall.reset_state()
 
 
 # ─────────────────────────────────────────────
@@ -134,9 +157,8 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data = val_ds,
         epochs          = EPOCHS_WARMUP,
-        class_weight    = class_weights,
         callbacks       = get_callbacks(phase="warmup"),
-        verbose         = 1,
+        verbose         = 2,
     )
 
     # ── Phase 2 : Fine-tuning
@@ -177,9 +199,8 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data = val_ds,
         epochs          = EPOCHS_FINETUNE,
-        class_weight    = class_weights,
         callbacks       = get_callbacks(phase="finetune"),
-        verbose         = 1,
+        verbose         = 2,
     )
 
     return model, history_warmup, history_finetune
@@ -209,7 +230,7 @@ def conv_block(x, filters, kernel_size=3, use_bn=True, dropout=0.0, name=None):
 
 
 # ─────────────────────────────────────────────
-# 2.1 6 CHANNELS CONCATENATION
+# 1.1 6 CHANNELS CONCATENATION
 # ─────────────────────────────────────────────
 
 def build_damage_cnn_concat(input_shape=(128, 128, 6)):
@@ -286,7 +307,7 @@ def build_damage_cnn_concat(input_shape=(128, 128, 6)):
 
 
 # ─────────────────────────────────────────────
-# 2.2 DUAL STREAM
+# 1.2 DUAL STREAM
 # ─────────────────────────────────────────────
 
 def se_block(x, reduction=16, name="se"):
@@ -347,15 +368,15 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
     # ── Siamese encoder (identical structure, independent weights for pre and post)
     def encoder(x, prefix):
         # Stage 1 — 32 filters, 64×64
-        x = res_block(x, 32,  dropout=0.25, name=f"{prefix}_s1")
+        x = res_block(x, 32,  dropout=0.35, name=f"{prefix}_s1")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool1")(x)
 
         # Stage 2 — 64 filters, 32×32
-        x = res_block(x, 64,  dropout=0.25, name=f"{prefix}_s2")
+        x = res_block(x, 64,  dropout=0.35, name=f"{prefix}_s2")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool2")(x)
 
         # Stage 3 — 128 filters, 16×16
-        x = res_block(x, 128, dropout=0.35, name=f"{prefix}_s3")
+        x = res_block(x, 128, dropout=0.45, name=f"{prefix}_s3")
         x = layers.MaxPooling2D(pool_size=2, name=f"{prefix}_pool3")(x)
         return x  # (batch, 16, 16, 128)
 
@@ -428,7 +449,7 @@ def compile_model(model: Model, learning_rate: float) -> Model:
         model.compile(
             optimizer = opt,
             # loss      = tf.keras.losses.BinaryCrossentropy(),
-            loss      = tf.keras.losses.BinaryFocalCrossentropy(gamma=1.0),
+            loss      = tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA, label_smoothing=0.05),
             metrics   = [tf.keras.metrics.BinaryAccuracy(name="accuracy")] + met
         )
     return model
@@ -436,52 +457,53 @@ def compile_model(model: Model, learning_rate: float) -> Model:
 def get_callbacks(phase: str = "warmup"):
     """
     Callbacks adaptés à chaque phase d'entraînement.
-
     Args:
         phase : "warmup" ou "finetune" only used for efficientnet
     """
     os.makedirs(os.path.dirname(CHECKPOINT_PATH), exist_ok=True)
-    if MODEL_ARCHITECTURE=="efficientnet":
+    if MODEL_ARCHITECTURE == "efficientnet":
         log_dir = os.path.join(LOG_DIR, phase)
         patience_es = 6  if phase == "warmup" else 10
         patience_lr = 3  if phase == "warmup" else 5
+        ckpt_path = CHECKPOINT_PATH
+        monitor = "val_auc_pr"
     else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ckpt_path = CHECKPOINT_PATH.replace(".keras", f"_{run_id}.keras")
         log_dir = LOG_DIR
         patience_es = 12
         patience_lr = 4
+        monitor = "val_f1"
     os.makedirs(log_dir, exist_ok=True)
+    print(f"[Checkpoint] {ckpt_path}")
 
     return [
-        # Arrêt si pas d'amélioration sur la val_loss
         EarlyStopping(
-            monitor="val_auc_pr",
+            monitor=monitor,
             mode="max",
             min_delta=1e-3,
-            patience=patience_es,
+            patience=20,           # was 12 — more room to train
             start_from_epoch=5,
             restore_best_weights=True,
             verbose=1
         ),
-        # Réduction du LR si plateau
         ReduceLROnPlateau(
-            monitor="val_auc_pr",
-            mode="max",
-            factor=0.5,
-            patience=patience_lr,
+            monitor=monitor,
+            factor=0.7,
+            patience=6,            # was 4 — give more room before cutting LR
             min_delta=5e-4,
             cooldown=1,
             min_lr=1e-6,
+            mode="max",
             verbose=1
         ),
-        # Sauvegarde du meilleur modèle
         ModelCheckpoint(
-            filepath=CHECKPOINT_PATH,
-            monitor="val_auc_pr",
+            filepath=ckpt_path,
+            monitor=monitor,
             mode="max",
             save_best_only=True,
             verbose=1
         ),
-        # TensorBoard
         TensorBoard(
             log_dir=log_dir,
             histogram_freq=1
@@ -492,11 +514,17 @@ def get_callbacks(phase: str = "warmup"):
 # 3. ENTRAÎNEMENT
 # ─────────────────────────────────────────────
 
-def train(train_ds, val_ds, class_weights=None):
-    if MODEL_ARCHITECTURE=="cnn_concat":
+def train(train_ds, val_ds, class_weight=None):
+    """
+    Entraîne le modèle CNN. Balanced sampling replaced by class_weight —
+    real distribution during training, gradient re-weighting compensates for imbalance.
+    """
+    if MODEL_ARCHITECTURE == "cnn_concat":
         model = build_damage_cnn_concat()
-    elif MODEL_ARCHITECTURE=="cnn_dual":
+    elif MODEL_ARCHITECTURE == "cnn_dual":
         model = build_damage_cnn_dual()
+    else:
+        raise ValueError(f"Architecture CNN inconnue: {MODEL_ARCHITECTURE}. Utilisez 'cnn_concat' ou 'cnn_dual'.")
 
     model = compile_model(model, LEARNING_RATE)
     model.summary()
@@ -505,9 +533,9 @@ def train(train_ds, val_ds, class_weights=None):
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS,
-        class_weight=class_weights,
+        class_weight=class_weight,
         callbacks=get_callbacks(),
-        verbose=1
+        verbose=2          # was 1; \r updates break tail -f
     )
     return model, history
 
@@ -516,9 +544,26 @@ def train(train_ds, val_ds, class_weights=None):
 # 4. ÉVALUATION
 # ─────────────────────────────────────────────
 
-def evaluate(model: Model, test_ds, threshold: float = 0.5):
+def find_best_threshold(y_true, y_pred_prob):
     """
-    Évalue le modèle : rapport complet + matrice de confusion.
+    Parcourt les seuils de 0.10 à 0.90 et retourne celui qui maximise le F1
+    sur l'ensemble fourni (typiquement le jeu de validation).
+    """
+    thresholds = np.arange(0.10, 0.91, 0.05)
+    best_t, best_f1 = 0.5, 0.0
+    for t in thresholds:
+        f1 = f1_score(y_true, (np.array(y_pred_prob) >= t).astype(int), zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_t = f1, t
+    print(f"[Threshold sweep] Meilleur seuil : {best_t:.2f} → F1 = {best_f1:.4f}")
+    return float(best_t)
+
+
+def evaluate(model, test_ds, threshold=None):
+    """
+    Évalue le modèle et affiche la matrice de confusion + F1.
+    Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
+    avant d'afficher le rapport final.
     """
     if MODEL_MODE == "multiclass":
         y_true, y_prob_all = [], []

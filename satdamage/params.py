@@ -22,6 +22,7 @@ VAL_RATIO     = 0.15
 TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
+MAX_WORKERS = 8
 
 # EfficientNet parameters
 EPOCHS_WARMUP   = 10
@@ -31,9 +32,11 @@ LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
 UNFREEZE_LAYERS = 40
 
 # CNN parameters
-EPOCHS        = 2
+EPOCHS        = 50
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
+DROPOUT_RATE  = 0.5
+FOCAL_GAMMA   = 1.0   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
@@ -46,6 +49,7 @@ LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
+CROPS_DIR   = os.environ.get("CROPS_DIR", "data/crops")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
