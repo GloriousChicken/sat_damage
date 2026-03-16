@@ -13,7 +13,7 @@ from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from collections import Counter
-from typing import List, Tuple, Dict, Optional, TypeVar
+from typing import Any, List, Tuple, Dict, Optional, TypeVar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from google.cloud import storage
 from imblearn.over_sampling import RandomOverSampler
@@ -572,6 +572,58 @@ def augment(image, label):
     return image, label
 
 
+def balance_dataset(samples, labels, majority_ratio: float = 2.0):
+    """Balances samples by oversampling minority labels then undersampling the majority label.
+
+    Works with generic sample containers (e.g. image-pairs in memory or file paths).
+    """
+    y = np.array(labels)
+    class_counts = Counter(y)
+    print(f"Before balancing: {class_counts}")
+
+    if len(class_counts) <= 1:
+        return samples, labels
+
+    majority_class = class_counts.most_common(1)[0][0]
+    minority_classes = [cls for cls in class_counts if cls != majority_class]
+
+    strategy_oversampling = {
+        cls: min(class_counts[cls] * 2, class_counts[majority_class])
+        for cls in minority_classes
+        if class_counts[cls] < class_counts[majority_class]
+    }
+
+    sample_idx = np.arange(len(samples)).reshape(-1, 1)
+    X_cur, y_cur = sample_idx, y
+
+    if strategy_oversampling:
+        over_strategy: Any = strategy_oversampling
+        ros = RandomOverSampler(
+            sampling_strategy=over_strategy,
+            random_state=RANDOM_SEED,
+        )
+        ros_out = ros.fit_resample(X_cur, y_cur)
+        X_cur, y_cur = ros_out[0], ros_out[1]
+
+    counts_after_over = Counter(y_cur)
+    minority_total = sum(v for k, v in counts_after_over.items() if k != majority_class)
+    target_majority = int(minority_total * majority_ratio)
+
+    if target_majority > 0 and counts_after_over[majority_class] > target_majority:
+        under_strategy: Any = {majority_class: target_majority}
+        rus = RandomUnderSampler(
+            sampling_strategy=under_strategy,
+            random_state=RANDOM_SEED,
+        )
+        rus_out = rus.fit_resample(X_cur, y_cur)
+        X_cur, y_cur = rus_out[0], rus_out[1]
+
+    balanced_samples = [samples[i] for i in X_cur.flatten()]
+    balanced_labels = list(y_cur)
+    print(f"After balancing: {Counter(balanced_labels)}")
+    return balanced_samples, balanced_labels
+
+
 # ─────────────────────────────────────────────
 # 8. BUILD LAZY tf.data.Dataset FROM DISK
 # ─────────────────────────────────────────────
@@ -629,6 +681,9 @@ def build_dataset_from_dir(
     n0, n1 = labels.count(0), labels.count(1)
     print(f"[INFO] {split_path.name}: {len(paths)} crops — Undamaged: {n0} | Damaged: {n1}")
 
+    if training and MODEL_MODE == "binary":
+        paths, labels = balance_dataset(paths, labels, majority_ratio=BALANCE_MAJORITY_RATIO)
+
     if training:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels)) \
                 .shuffle(len(paths), reshuffle_each_iteration=True)
@@ -674,31 +729,6 @@ def build_dataset_from_dir(
 # ─────────────────────────────────────────────
 # 9. CLASS WEIGHTS
 # ─────────────────────────────────────────────
-
-def compute_class_weights(labels):
-    """
-    xView2 contient beaucoup plus de bâtiments non endommagés.
-    Les class weights compensent ce déséquilibre.
-    """
-    if MODEL_MODE == "multiclass":
-        weights = compute_class_weight(
-            class_weight="balanced",
-            classes=np.array([0, 1, 2, 3]),
-            y=np.array(labels),
-        )
-        weight_dict = dict(enumerate(weights))
-        print("\n[INFO] Class weights calculés :")
-        for name, idx in DAMAGE_TO_CLASS.items():
-            bar = "▓" * int(weight_dict[idx])
-            print(f"  [{idx}] {name:<18} → {weight_dict[idx]:.3f}  {bar}")
-    else:
-        weights = compute_class_weight(
-            class_weight="balanced",
-            classes=np.array([0, 1]),
-            y=labels
-        )
-        weight_dict = dict(enumerate(weights))
-    return weight_dict
 
 def compute_class_weights_from_dir(split_dir: str) -> Dict[int, float]:
     split_path = Path(split_dir)
