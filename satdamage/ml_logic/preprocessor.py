@@ -579,7 +579,11 @@ def balance_dataset(samples, labels, majority_ratio: float = 2.0):
     """
     y = np.array(labels)
     class_counts = Counter(y)
-    print(f"Before balancing: {class_counts}")
+    class_summary = " | ".join(
+        f"Class {cls}: {class_counts.get(cls, 0)}"
+        for cls in sorted(class_counts.keys())
+    )
+    print(f"\n** Before balancing: **\n {class_summary}")
 
     if len(class_counts) <= 1:
         return samples, labels
@@ -620,7 +624,13 @@ def balance_dataset(samples, labels, majority_ratio: float = 2.0):
 
     balanced_samples = [samples[i] for i in X_cur.flatten()]
     balanced_labels = list(y_cur)
-    print(f"After balancing: {Counter(balanced_labels)}")
+
+    balanced_class_counts = Counter(balanced_labels)
+    class_summary = " | ".join(
+        f"Class {cls}: {balanced_class_counts.get(cls, 0)}"
+        for cls in sorted(balanced_class_counts.keys())
+    )
+    print(f"\n** After balancing: **\n {class_summary}\n")
     return balanced_samples, balanced_labels
 
 
@@ -678,13 +688,15 @@ def build_dataset_from_dir(
     if not paths:
         raise FileNotFoundError(f"No crops found in {split_dir}")
 
-    n0, n1 = labels.count(0), labels.count(1)
-    print(f"[INFO] {split_path.name}: {len(paths)} crops — Undamaged: {n0} | Damaged: {n1}")
+    counts = Counter(labels)
+    class_summary = " | ".join(
+        f"Class {cls}: {counts.get(cls, 0)}"
+        for cls in sorted(counts.keys())
+    )
+    print(f"[INFO] {split_path.name}: {len(paths)} crops — {class_summary}")
 
-    if training and MODEL_MODE == "binary":
+    if training :
         paths, labels = balance_dataset(paths, labels, majority_ratio=BALANCE_MAJORITY_RATIO)
-
-    if training:
         ds = tf.data.Dataset.from_tensor_slices((paths, labels)) \
                 .shuffle(len(paths), reshuffle_each_iteration=True)
     else:
