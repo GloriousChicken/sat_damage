@@ -4,11 +4,19 @@ import os
 ##################  MAIN VARIABLES  #############
 CROP_SIZE        = (128, 128)
 CROP_PADDING     = 10
+MULTICLASS       = False
 DAMAGE_TO_BINARY = {
     "no-damage": 0,
     "minor-damage": 1,
     "major-damage": 1,
     "destroyed": 1,
+    "un-classified": None
+}
+DAMAGE_TO_CLASS = {
+    "no-damage": 0,
+    "minor-damage": 1,
+    "major-damage": 2,
+    "destroyed": 3,
     "un-classified": None
 }
 TRAIN_RATIO   = 0.70
@@ -30,6 +38,7 @@ LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 
 # Model selection
+MODEL_NAMES = ["cnn_damage", "cnn_concat", "cnn_dual", "efficientnet"]
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 
 # Sauvegarde
@@ -45,13 +54,6 @@ GCP_PROJECT = os.environ.get("GCP_PROJECT")
 GCP_REGION = os.environ.get("GCP_REGION")
 BUCKET_NAME = os.environ.get("BUCKET_NAME")
 INSTANCE = os.environ.get("INSTANCE")
-
-MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI")
-MLFLOW_EXPERIMENT = os.environ.get("MLFLOW_EXPERIMENT")
-MLFLOW_MODEL_NAME = os.environ.get("MLFLOW_MODEL_NAME")
-
-PREFECT_FLOW_NAME = os.environ.get("PREFECT_FLOW_NAME")
-PREFECT_LOG_LEVEL = os.environ.get("PREFECT_LOG_LEVEL")
 
 GAR_IMAGE = os.environ.get("GAR_IMAGE")
 GAR_MEMORY = os.environ.get("GAR_MEMORY")

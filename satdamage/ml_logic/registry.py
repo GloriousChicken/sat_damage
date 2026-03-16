@@ -63,13 +63,16 @@ def save_results(params: dict, metrics: dict) -> None:
     return None
 
 
-def load_model() -> keras.Model:
+def load_model(model_name: str) -> keras.Model:
     """
     Return a saved model:
     - locally (latest one in alphabetical order)
     - or from GCS (most recent one) if MODEL_TARGET=='gcs'
     Return None (but do not Raise) if no model is found
     """
+    if model_name not in MODEL_NAMES:
+        print(f"❌ Model name {model_name} not recognized. Available models are: {MODEL_NAMES}")
+        return None
 
     if MODEL_TARGET == "local":
         print(Fore.BLUE + f"\nLoad latest model from local registry..." + Style.RESET_ALL)
@@ -77,7 +80,7 @@ def load_model() -> keras.Model:
         # Get the latest model version name by the timestamp on disk
         local_model_directory = LOCAL_REGISTRY_PATH
         # local_model_directory = os.path.join(LOCAL_REGISTRY_PATH, "checkpoints")
-        local_model_paths = glob.glob(f"{local_model_directory}/*.h5")
+        local_model_paths = glob.glob(f"{local_model_directory}/*{model_name}*.h5")
 
         if not local_model_paths:
             return None
@@ -96,21 +99,24 @@ def load_model() -> keras.Model:
         print(Fore.BLUE + f"\nLoad latest model from GCS..." + Style.RESET_ALL)
 
         client = storage.Client()
-        blobs = list(client.get_bucket(BUCKET_NAME).list_blobs(prefix="models"))
-        print(blobs)
+        blobs = [
+            blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
+            if model_name in blob.name
+        ]
 
         try:
             latest_blob = max(blobs, key=lambda x: x.updated)
+            # print(f"Latest model in GCS bucket {BUCKET_NAME} is {latest_blob.name}, updated at {latest_blob.updated}")
             latest_model_path_to_save = os.path.join(LOCAL_REGISTRY_PATH, latest_blob.name)
+            # print(f"Downloading latest model to {latest_model_path_to_save}...")
             latest_blob.download_to_filename(latest_model_path_to_save)
-
             latest_model = keras.models.load_model(latest_model_path_to_save)
-
+            # print(f"{latest_model.name} model loaded from GCS bucket {BUCKET_NAME}")
             print("✅ Latest model downloaded from cloud storage")
 
             return latest_model
         except:
-            print(f"\n❌ No model found in GCS bucket {BUCKET_NAME}")
+            print(f"\n❌ {model_name} model not found in GCS bucket {BUCKET_NAME}")
 
             return None
 
