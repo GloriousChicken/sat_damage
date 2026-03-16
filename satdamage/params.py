@@ -23,6 +23,7 @@ TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
 MAX_WORKERS = 8
+BALANCE_MAJORITY_RATIO = float(os.environ.get("BALANCE_MAJORITY_RATIO", "2.0"))
 
 # EfficientNet parameters
 EPOCHS_WARMUP   = 10
