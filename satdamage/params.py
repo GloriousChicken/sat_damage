@@ -25,8 +25,8 @@ LR_FINETUNE  = 5e-5    # Phase 2 : fine-tuning couches profondes
 UNFREEZE_LAYERS = 40
 
 # CNN parameters
-EPOCHS        = 60
-LEARNING_RATE = 1e-4   # was 2e-4; halved — effective LR with class_weight≈1.82 was too aggressive
+EPOCHS        = 50
+LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 FOCAL_GAMMA   = 2.0   # was 0.0; re-enable focal — class_weight experiment failed
