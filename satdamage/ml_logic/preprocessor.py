@@ -734,7 +734,15 @@ def build_dataset_from_dir(
     if training:
         ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
 
-    ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    if training:
+        # .repeat() makes the stream infinite so the dataset never raises StopIteration
+        # mid-epoch; .take(n_steps) gives Keras a known finite cardinality per epoch
+        # so no "ran out of data" warning fires.  A fresh iterator is created each epoch
+        # (Keras resets when steps_per_epoch is inferred, not explicit).
+        n_steps = max(1, len(paths) // batch_size)
+        ds = ds.repeat().batch(batch_size).take(n_steps).prefetch(tf.data.AUTOTUNE)
+    else:
+        ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     return ds
 
 

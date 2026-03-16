@@ -158,7 +158,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = EPOCHS_WARMUP,
         callbacks       = get_callbacks(phase="warmup"),
-        verbose         = 2,
+        verbose         = 1,
     )
 
     # ── Phase 2 : Fine-tuning
@@ -200,7 +200,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = EPOCHS_FINETUNE,
         callbacks       = get_callbacks(phase="finetune"),
-        verbose         = 2,
+        verbose         = 1,
     )
 
     return model, history_warmup, history_finetune
@@ -540,7 +540,7 @@ def train(train_ds, val_ds, class_weight=None):
         epochs=EPOCHS,
         class_weight=class_weight,
         callbacks=get_callbacks(),
-        verbose=2          # was 1; \r updates break tail -f
+        verbose=1,
     )
     return model, history
 
