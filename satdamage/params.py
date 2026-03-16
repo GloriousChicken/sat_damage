@@ -42,7 +42,7 @@ FOCAL_GAMMA   = 1.0   # was 0.0; re-enable focal — class_weight experiment fai
 # Model selection
 MODEL_NAMES = ["cnn_concat", "cnn_dual", "efficientnet"]
 MODEL_ARCHITECTURE = "cnn_concat"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
-MODEL_MODE = "binary" # multiclass or binary
+MODEL_MODE = "multiclass" # multiclass or binary
 NUM_CLASSES = len(DAMAGE_TO_CLASS)
 
 # Sauvegarde
