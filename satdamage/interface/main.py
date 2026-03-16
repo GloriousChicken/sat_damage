@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import time
 from sklearn.utils.class_weight import compute_class_weight
@@ -8,52 +9,42 @@ from satdamage.ml_logic.registry import *
 from google.cloud import storage
 import gc
 import tensorflow as tf
+from pathlib import Path
+from satdamage.ml_logic.preprocessor import (
+    find_image_pairs,
+    find_image_pairs_gcs,
+    split_pairs_by_event,
+    extract_crops_to_disk,
+    build_dataset_from_dir,
+    compute_class_weights_from_dir,
+)
+from satdamage.ml_logic.model import train, evaluate, train_efficientnet
+from satdamage.params import MODEL_TARGET, DATA_DIR, BATCH_SIZE, MODEL_ARCHITECTURE
+from satdamage.ml_logic.registry import *
 
 # ─────────────────────────────────────────────
-# 1. GESTION DU DÉSÉQUILIBRE DE CLASSES
+# CONFIGURATION
 # ─────────────────────────────────────────────
 
-def compute_class_weights(labels):
-    """
-    xView2 contient beaucoup plus de bâtiments non endommagés.
-    Les class weights compensent ce déséquilibre.
-    """
-    weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.array([0, 1]),
-        y=labels
-    )
-    return {0: weights[0], 1: weights[1]}
-
+CROPS_DIR   = os.environ.get("CROPS_DIR", "/home/pierre/crops")
+MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 8))
 
 
 # ─────────────────────────────────────────────
-# 2. PIPELINE COMPLET
+# PIPELINE COMPLET
 # ─────────────────────────────────────────────
 
-def build_xview2_datasets(xview2_root: str):
+def build_xview2_datasets(xview2_root: str, crops_dir: str):
     """
-    Pipeline complet xView2 → tf.data.Dataset.
-
-    Étapes :
-        1. Scan des paires d'images pré/post
-        2. Split par événement (sans data leakage)
-        3. Extraction des crops de bâtiments
-        4. Calcul des class weights
-        5. Construction des tf.data.Dataset
-
-    Retourne :
-        train_ds, val_ds, test_ds  : tf.data.Dataset
-        class_weights              : dict {0: w0, 1: w1}
-
-    Exemple d'utilisation :
-        train_ds, val_ds, test_ds, cw = build_xview2_datasets("xview2/")
-        model, history = train(train_ds, val_ds, class_weight=cw)
-        evaluate(model, test_ds)
+    Full pipeline:
+        1. Scan image pairs
+        2. Split by event (no leakage)
+        3. Extract crops to disk (idempotent — skips if already done)
+        4. Compute class weights from disk
+        5. Build lazy tf.data.Dataset
     """
-
     print("=" * 55)
-    print("  xView2 Dataset Builder")
+    print("  SatDamage — xView2 Dataset Builder (Lazy)")
     print("=" * 55)
 
     # ── 1. Scan
@@ -72,98 +63,78 @@ def build_xview2_datasets(xview2_root: str):
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # ── 2. Extraction de TOUS les crops (avant le split)
-    start_time = time.time()
-    print("\n[2/5] Extraction de tous les crops...")
-    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
-    if not all_samples:
-        raise ValueError("Aucun crop extrait. Vérifiez les données.")
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
+    # ── 2. Split by event (no data leakage between disaster events)
+    print("\n[2/5] Split par evenement (sans data leakage)...")
+    train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs)
 
-    # ── 3. Split stratifié des crops
-    start_time = time.time()
-    print("\n[3/5] Split stratifié train / val / test...")
-    train_samples, val_samples, test_samples, train_labels, val_labels, test_labels = split_samples(
-        all_samples, all_labels
-    )
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
+    # ── 3. Extract crops to disk (lazy pipeline — idempotent)
+    print("\n[3/5] Extraction des crops vers le disque...")
+    extract_crops_to_disk(train_pairs, crops_dir, "train", max_workers=MAX_WORKERS)
+    extract_crops_to_disk(val_pairs,   crops_dir, "val",   max_workers=MAX_WORKERS)
+    extract_crops_to_disk(test_pairs,  crops_dir, "test",  max_workers=MAX_WORKERS)
 
+    # ── 4. Class weights — passed to model.fit() to compensate for imbalance
+    print("\n[4/5] Distribution des classes (class_weight)...")
+    class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
+    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
+    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
 
-    # ── 4. Class weights
-    start_time = time.time()
-    print("\n[4/5] Calcul des class weights...")
-    class_weights = compute_class_weights(train_labels)
-    print(f"  class_weight[0] = {class_weights[0]:.3f}")
-    print(f"  class_weight[1] = {class_weights[1]:.3f}")
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
-
-
-    # ── 5. tf.data.Dataset
-    start_time = time.time()
-    print("\n[5/5 - 1] Construction des tf.data.Dataset Train")
-    train_ds = build_dataset(train_samples, train_labels, training=True)
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
-
-    start_time = time.time()
-    print("\n[5/5 - 2] Construction des tf.data.Dataset Val")
-    val_ds   = build_dataset(val_samples,   val_labels,   training=False)
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
-
-    start_time = time.time()
-    print("\n[5/5 - 3] Construction des tf.data.Dataset Test")
-    test_ds  = build_dataset(test_samples,  test_labels,  training=False)
-    end_time = time.time()
-    print(f"Temps : {end_time - start_time:.2f} secondes")
+    # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
+    print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
+    train_ds = build_dataset_from_dir(str(Path(crops_dir) / "train"), training=True)
+    val_ds   = build_dataset_from_dir(str(Path(crops_dir) / "val"),   training=False)
+    test_ds  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
 
     print("\n" + "=" * 55)
-    print("  Datasets prêts !")
-    print(f"  Train  : {len(train_labels):>6} bâtiments")
-    print(f"  Val    : {len(val_labels):>6} bâtiments")
-    print(f"  Test   : {len(test_labels):>6} bâtiments")
+    print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
 
     return train_ds, val_ds, test_ds, class_weights
 
 
-
 # ─────────────────────────────────────────────
-# 3. POINT D'ENTRÉE
+# POINT D'ENTREE
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
 
-    # ── Pipeline automatique complet
     train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
-        xview2_root=DATA_DIR
+        xview2_root=DATA_DIR,
+        crops_dir=CROPS_DIR,
     )
 
     # ── Lancement de l'entraînement
-
-    if MODEL_ARCHITECTURE=="efficientnet":
+    if MODEL_ARCHITECTURE == "efficientnet":
         model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds)
-    elif MODEL_ARCHITECTURE=="cnn_dual" or MODEL_ARCHITECTURE=="cnn_concat":
+    elif MODEL_ARCHITECTURE in ("cnn_dual", "cnn_concat"):
         model, history = train(train_ds, val_ds)
     else:
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
-    print("✅ Train done \n")
+    print("Train done \n")
 
     evaluate(model, test_ds)
+
+    import json, os
+    metrics = {
+        "f1_damaged":           0.0,    # fill after training
+        "precision_damaged":    0.0,
+        "recall_damaged":       0.0,
+        "accuracy":             0.0,
+        "val_auc":              0.0,
+        "best_epoch":           0,
+        "dataset":              "xBD challenge full",
+        "model":                f"EfficientNetV2B0 binary v1" if MODEL_ARCHITECTURE == "efficientnet" else "CNN dual-stream siamese binary v5",
+        "crop_size":            128,
+        "notes":                "EfficientNetV2B0 2-phase warmup+finetune, focal loss, no class_weight" if MODEL_ARCHITECTURE == "efficientnet" else "dual-stream residual+SE, binary, crop-level stratified split"
+    }
+    os.makedirs("metrics", exist_ok=True)
+    with open(f"metrics/run_{MODEL_ARCHITECTURE}_v1.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+
     print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
 
     # explicit cleanup to avoid AtomicFunction __del__ noise at interpreter shutdown
     del model, train_ds, val_ds, test_ds
     tf.keras.backend.clear_session()
     gc.collect()
-
-    # ── Debug pas à pas (décommenter si besoin)
-    #
-    # all_pairs = find_image_pairs("xview2/")
-    # train_pairs, val_pairs, test_pairs = stratified_event_split(all_pairs)
-    # train_img_pairs, train_labels = build_all_samples(train_pairs[:5])
-    # visualize_samples(train_img_pairs, train_labels, n=6)
