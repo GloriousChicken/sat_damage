@@ -1,6 +1,7 @@
 import os
 from io import BytesIO
 import json
+import shutil
 import numpy as np
 import tensorflow as tf
 import rasterio
@@ -12,7 +13,7 @@ from shapely import wkt as shapely_wkt
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from collections import Counter
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, TypeVar
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from google.cloud import storage
 from imblearn.over_sampling import RandomOverSampler
@@ -26,6 +27,9 @@ Pipeline:
     3. extract_crops_to_disk()  → saves PNGs to CROPS_DIR/{train,val,test}/{0,1}/
     4. build_dataset_from_dir() → lazy tf.data.Dataset, loads batch by batch from disk
 """
+
+
+SampleType = TypeVar("SampleType")
 
 
 if MODEL_TARGET == "gcs":
@@ -395,7 +399,7 @@ def extract_crops_to_disk(
             total_errors += errors
             completed    += 1
 
-            if verbose and completed % 50 == 0:
+            if verbose and completed % 10 == 0:
                 print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
     n0 = len(list((split_dir / "0").glob("*.png"))) if (split_dir / "0").exists() else 0
@@ -410,12 +414,12 @@ def extract_crops_to_disk(
 # ─────────────────────────────────────────────
 
 def split_samples(
-    samples: List[Tuple[np.ndarray, np.ndarray]],  # List of (pre_crop, post_crop)
+    samples: List[SampleType],
     labels: List[int],
     train_ratio: float = TRAIN_RATIO,
     val_ratio: float = VAL_RATIO,
     seed: int = RANDOM_SEED
-) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[Tuple[np.ndarray, np.ndarray]], List[int], List[int], List[int]]:
+) -> Tuple[List[SampleType], List[SampleType], List[SampleType], List[int], List[int], List[int]]:
     """
     Stratified split of samples (crops) into train, val, test sets.
     Preserves label distribution using stratification.
@@ -459,6 +463,87 @@ def split_samples(
         print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
 
     return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
+
+
+def split_crops_dir_stratified(
+    source_dir: str,
+    out_dir: str,
+    train_ratio: float = TRAIN_RATIO,
+    val_ratio: float = VAL_RATIO,
+    seed: int = RANDOM_SEED,
+) -> Dict[str, int]:
+    """
+    Stratified split of already-extracted PNG crops on disk into train/val/test.
+    Moves files from source_dir/{label} to out_dir/{train,val,test}/{label}.
+    """
+    source_path = Path(source_dir)
+    out_path = Path(out_dir)
+    split_names = ("train", "val", "test")
+
+    existing_counts = {
+        split_name: len(list((out_path / split_name).rglob("*.png")))
+        for split_name in split_names
+    }
+    if any(existing_counts.values()):
+        print(
+            "[INFO] Stratified crop split already present on disk, skipping split. "
+            f"Train: {existing_counts['train']} | Val: {existing_counts['val']} | Test: {existing_counts['test']}"
+        )
+        return existing_counts
+
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source crops directory not found: {source_dir}")
+
+    paths, labels = [], []
+    for label_dir in sorted(
+        [path for path in source_path.iterdir() if path.is_dir() and path.name.isdigit()],
+        key=lambda path: int(path.name),
+    ):
+        for png in label_dir.glob("*.png"):
+            paths.append(png)
+            labels.append(int(label_dir.name))
+
+    if not paths:
+        raise FileNotFoundError(f"No crops found in {source_dir}")
+
+    train_paths, val_paths, test_paths, train_labels, val_labels, test_labels = split_samples(
+        samples=paths,
+        labels=labels,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        seed=seed,
+    )
+
+    split_data = {
+        "train": (train_paths, train_labels),
+        "val": (val_paths, val_labels),
+        "test": (test_paths, test_labels),
+    }
+
+    for split_name, (split_paths, split_labels) in split_data.items():
+        for src_path, label in zip(split_paths, split_labels):
+            dst_dir = out_path / split_name / str(label)
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src_path), str(dst_dir / src_path.name))
+
+    for label_dir in source_path.iterdir():
+        if label_dir.is_dir():
+            shutil.rmtree(label_dir, ignore_errors=True)
+
+    try:
+        source_path.rmdir()
+    except OSError:
+        pass
+
+    final_counts = {
+        split_name: len(list((out_path / split_name).rglob("*.png")))
+        for split_name in split_names
+    }
+    print(
+        "[INFO] Disk split complete -> "
+        f"Train: {final_counts['train']} | Val: {final_counts['val']} | Test: {final_counts['test']}"
+    )
+    return final_counts
 
 
 # ─────────────────────────────────────────────
@@ -529,7 +614,8 @@ def build_dataset_from_dir(
     split_path = Path(split_dir)
     paths, labels = [], []
 
-    for label in [0, 1]:
+    label_values = list(range(NUM_CLASSES)) if MODEL_MODE == "multiclass" else [0, 1]
+    for label in label_values:
         label_dir = split_path / str(label)
         if not label_dir.exists():
             continue
@@ -560,12 +646,23 @@ def build_dataset_from_dir(
 
     ds = ds.filter(lambda img, lbl: lbl >= 0)
 
-    ds = ds.map(
-        lambda img, lbl: (
-            tf.ensure_shape(img, (*CROP_SIZE, 6)),
-            tf.ensure_shape(lbl, ())
+    if MODEL_MODE == "multiclass":
+        ds = ds.map(
+            lambda img, lbl: (
+                tf.ensure_shape(img, (*CROP_SIZE, 6)),
+                tf.ensure_shape(
+                    tf.one_hot(tf.cast(lbl, tf.int32), depth=NUM_CLASSES),
+                    (NUM_CLASSES,)
+                )
+            )
         )
-    )
+    else:
+        ds = ds.map(
+            lambda img, lbl: (
+                tf.ensure_shape(img, (*CROP_SIZE, 6)),
+                tf.ensure_shape(tf.reshape(lbl, (1,)), (1,))
+            )
+        )
 
     if training:
         ds = ds.map(augment, num_parallel_calls=tf.data.AUTOTUNE)
