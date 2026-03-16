@@ -28,6 +28,8 @@ UNFREEZE_LAYERS = 40
 EPOCHS        = 50
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
+DROPOUT_RATE  = 0.5
+FOCAL_GAMMA   = 2.0   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
