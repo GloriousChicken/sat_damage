@@ -18,14 +18,26 @@ def compute_class_weights(labels):
     xView2 contient beaucoup plus de bâtiments non endommagés.
     Les class weights compensent ce déséquilibre.
     """
-    weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.array([0, 1]),
-        y=labels
-    )
-    return {0: weights[0], 1: weights[1]}
+    if MODEL_MODE == "multiclass":
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=np.array([0, 1, 2, 3]),
+            y=np.array(labels),
+        )
+        weight_dict = dict(enumerate(weights))
+        print("\n[INFO] Class weights calculés :")
+        for name, idx in DAMAGE_TO_CLASS.items():
+            bar = "▓" * int(weight_dict[idx])
+            print(f"  [{idx}] {name:<18} → {weight_dict[idx]:.3f}  {bar}")
+    else:
+        weights = compute_class_weight(
+            class_weight="balanced",
+            classes=np.array([0, 1]),
+            y=labels
+        )
+        weight_dict = dict(enumerate(weights))
 
-
+    return weight_dict
 
 # ─────────────────────────────────────────────
 # 2. PIPELINE COMPLET
@@ -75,7 +87,7 @@ def build_xview2_datasets(xview2_root: str):
     # ── 2. Extraction de TOUS les crops (avant le split)
     start_time = time.time()
     print("\n[2/5] Extraction de tous les crops...")
-    all_samples, all_labels = build_all_samples(all_pairs, verbose=True)
+    all_samples, all_labels = build_all_samples(all_pairs[:20], verbose=True)
     if not all_samples:
         raise ValueError("Aucun crop extrait. Vérifiez les données.")
     end_time = time.time()
@@ -95,8 +107,7 @@ def build_xview2_datasets(xview2_root: str):
     start_time = time.time()
     print("\n[4/5] Calcul des class weights...")
     class_weights = compute_class_weights(train_labels)
-    print(f"  class_weight[0] = {class_weights[0]:.3f}")
-    print(f"  class_weight[1] = {class_weights[1]:.3f}")
+    print(f"class_weight = {class_weights}")
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
