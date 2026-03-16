@@ -64,11 +64,11 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # ── 4. Class weights — passed to model.fit() to compensate for imbalance
-    print("\n[4/5] Distribution des classes (class_weight)...")
-    class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
-    print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
-    print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
+    # # ── 4. Class weights — passed to model.fit() to compensate for imbalance
+    # print("\n[4/5] Distribution des classes (class_weight)...")
+    # class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
+    # print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
+    # print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
 
     # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
     print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
@@ -82,8 +82,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     print("=" * 55)
     print("  Datasets prets (chargement lazy depuis disque)")
     print("=" * 55)
-    return train_ds, val_ds, test_ds, class_weights
-
+    return train_ds, val_ds, test_ds
 
 # ─────────────────────────────────────────────
 # POINT D'ENTREE
@@ -93,7 +92,7 @@ if __name__ == "__main__":
     if DATA_DIR is None:
         raise ValueError("DATA_DIR environment variable must be set.")
 
-    train_ds, val_ds, test_ds, class_weights = build_xview2_datasets(
+    train_ds, val_ds, test_ds = build_xview2_datasets(
         xview2_root=DATA_DIR,
         crops_dir=CROPS_DIR,
     )
