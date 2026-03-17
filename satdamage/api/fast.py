@@ -7,12 +7,13 @@ import gc
 import tensorflow as tf
 from PIL import Image
 from io import BytesIO
-from typing import List
+from typing import List, Dict
+from shapely import wkt as shapely_wkt
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from satdamage.ml_logic import registry
-from satdamage.ml_logic.preprocessor import *
-from satdamage.params import MODEL_TARGET, MODEL_NAMES, DAMAGE_TO_BINARY, DAMAGE_TO_CLASS, MULTICLASS
+from satdamage.ml_logic.preprocessor import _polygon_to_bbox, crop_building
+from satdamage.params import MODEL_NAMES, DAMAGE_TO_BINARY, DAMAGE_TO_CLASS, MODEL_MODE
 
 app = FastAPI()
 # Allowing all middleware is optional, but good practice for dev purposes
@@ -79,8 +80,8 @@ async def predict(files: List[UploadFile] = File(...), model_name: str = Query(.
     h, w = pre_img.shape[:2]
     buildings_pre = api_load_json_buildings(pre_label)
     buildings_post = api_load_json_buildings(post_label)
-    pre_crops  = np.array([crop_building(pre_img,  polygon_to_pixel_bbox(b["polygon"], w, h)) for b in buildings_pre])
-    post_crops = np.array([crop_building(post_img, polygon_to_pixel_bbox(b["polygon"], w, h)) for b in buildings_post])
+    pre_crops  = np.array([crop_building(pre_img,  _polygon_to_bbox(b["polygon"], w, h)) for b in buildings_pre])
+    post_crops = np.array([crop_building(post_img, _polygon_to_bbox(b["polygon"], w, h)) for b in buildings_post])
     y = np.concatenate([pre_crops, post_crops], axis=-1)
 
     deb = time.time()
@@ -108,7 +109,7 @@ async def predict(files: List[UploadFile] = File(...), model_name: str = Query(.
     fin = time.time()
     print(f"Prediction run in {fin - deb:.2f} seconds.")
 
-    if MULTICLASS:
+    if MODEL_MODE == "multiclass":
         result = {
             i: [DAMAGE_TO_CLASS.get(building["properties"]["subtype"]), float(prediction[i])]
             for i, building in enumerate(post_label["features"]["xy"])
