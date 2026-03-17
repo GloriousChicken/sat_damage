@@ -3,6 +3,7 @@ import os
 import time
 import json
 import tempfile
+import zipfile
 
 from io import BytesIO
 from colorama import Fore, Style
@@ -105,6 +106,9 @@ def load_model(model_name: str) -> keras.Model:
             blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
             if model_name in blob.name
         ]
+        if not blobs:
+            print(f"\n❌ No model found in GCS bucket {BUCKET_NAME} with name {model_name}")
+            return None
 
         try:
             latest_blob = max(blobs, key=lambda x: x.updated)
@@ -118,10 +122,13 @@ def load_model(model_name: str) -> keras.Model:
                 tmp_path = tmp.name
 
             try:
-                if MODEL_MODE == "binary":
-                    custom_objects = {"BinaryF1Score": BinaryF1Score()}
-                else:
-                    custom_objects = {}
+                with zipfile.ZipFile(tmp_path, 'r') as z:
+                    with z.open('config.json') as f:
+                        config = json.load(f)
+
+                config_str = json.dumps(config)
+                needs_binary_f1 = "BinaryF1Score" in config_str
+                custom_objects = {"BinaryF1Score": BinaryF1Score()} if needs_binary_f1 else {}
                 latest_model = keras.models.load_model(
                     tmp_path,
                     custom_objects=custom_objects
@@ -130,17 +137,16 @@ def load_model(model_name: str) -> keras.Model:
                 print(f"Model {latest_model.name} loaded from GCS bucket {BUCKET_NAME} in {fin - deb:.2f} seconds.")
 
             except Exception as e:
-                print(f"Erreur lors du chargement du modèle : {type(e).__name__}: {e}")
-                raise
+                print(f"Error while loading model : {type(e).__name__}: {e}")
+                return None
             finally:
                 os.remove(tmp_path)
 
             print("\n✅ Latest model downloaded from cloud storage")
-
             return latest_model
+
         except:
             print(f"\n❌ {model_name} model not found in GCS bucket {BUCKET_NAME}")
-
             return None
 
     return None
