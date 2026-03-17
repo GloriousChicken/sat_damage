@@ -51,7 +51,7 @@ LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
-CROPS_DIR   = os.environ.get("CROPS_DIR")
+CROPS_DIR   = os.environ.get("CROPS_DIR", "data/crops")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
