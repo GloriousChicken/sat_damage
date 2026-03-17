@@ -590,12 +590,16 @@ def balance_dataset(samples, labels, majority_ratio: float = 2.0):
 
     majority_class = class_counts.most_common(1)[0][0]
     minority_classes = [cls for cls in class_counts if cls != majority_class]
+    minority_total_before = sum(class_counts[cls] for cls in minority_classes)
 
-    strategy_oversampling = {
-        cls: min(class_counts[cls] * 2, class_counts[majority_class])
-        for cls in minority_classes
-        if class_counts[cls] < class_counts[majority_class]
-    }
+    if minority_total_before * 10 < class_counts[majority_class]:
+        strategy_oversampling = {
+            cls: min(class_counts[cls] * 2, class_counts[majority_class])
+            for cls in minority_classes
+            if class_counts[cls] < class_counts[majority_class]
+        }
+    else:
+        strategy_oversampling = {}
 
     sample_idx = np.arange(len(samples)).reshape(-1, 1)
     X_cur, y_cur = sample_idx, y
@@ -608,6 +612,8 @@ def balance_dataset(samples, labels, majority_ratio: float = 2.0):
         )
         ros_out = ros.fit_resample(X_cur, y_cur)
         X_cur, y_cur = ros_out[0], ros_out[1]
+    else:
+        print("\n** No oversampling applied (minority classes not extremely underrepresented) **")
 
     counts_after_over = Counter(y_cur)
     minority_total = sum(v for k, v in counts_after_over.items() if k != majority_class)
@@ -621,6 +627,8 @@ def balance_dataset(samples, labels, majority_ratio: float = 2.0):
         )
         rus_out = rus.fit_resample(X_cur, y_cur)
         X_cur, y_cur = rus_out[0], rus_out[1]
+    else:
+        print("\n** No undersampling applied (majority class not extremely overrepresented after oversampling) **")
 
     balanced_samples = [samples[i] for i in X_cur.flatten()]
     balanced_labels = list(y_cur)
@@ -696,6 +704,9 @@ def build_dataset_from_dir(
     print(f"[INFO] {split_path.name}: {len(paths)} crops — {class_summary}")
 
     if training :
+        majority_count = max(counts.values())
+        minority_total = sum(counts.values()) - majority_count
+        # if minority_total * 3 < majority_count:
         paths, labels = balance_dataset(paths, labels, majority_ratio=BALANCE_MAJORITY_RATIO)
         ds = tf.data.Dataset.from_tensor_slices((paths, labels)) \
                 .shuffle(len(paths), reshuffle_each_iteration=True)
