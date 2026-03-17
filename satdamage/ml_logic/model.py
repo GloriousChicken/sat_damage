@@ -158,7 +158,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = EPOCHS_WARMUP,
         callbacks       = get_callbacks(phase="warmup"),
-        verbose         = 2,
+        verbose         = 1,
     )
 
     # ── Phase 2 : Fine-tuning
@@ -200,7 +200,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
         validation_data = val_ds,
         epochs          = EPOCHS_FINETUNE,
         callbacks       = get_callbacks(phase="finetune"),
-        verbose         = 2,
+        verbose         = 1,
     )
 
     return model, history_warmup, history_finetune
@@ -437,20 +437,25 @@ def compile_model(model: Model, learning_rate: float) -> Model:
         tf.keras.metrics.AUC(name="auc"),
         tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
         # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
-        tf.keras.metrics.F1Score(name="f1", threshold=0.5, average="micro")
     ]
     if MODEL_MODE == "multiclass":
         model.compile(
             optimizer = opt,
             loss      = tf.keras.losses.CategoricalFocalCrossentropy(gamma=1.0, from_logits=False),
-            metrics   = [tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")] + met
+            metrics   = [
+                tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
+                tf.keras.metrics.F1Score(name="f1", average="macro"),
+            ] + met
         )
     else:
         model.compile(
             optimizer = opt,
             # loss      = tf.keras.losses.BinaryCrossentropy(),
             loss      = tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA, label_smoothing=0.05),
-            metrics   = [tf.keras.metrics.BinaryAccuracy(name="accuracy")] + met
+            metrics   = [
+                tf.keras.metrics.BinaryAccuracy(name="accuracy"),
+                BinaryF1Score(name="f1", threshold=0.5),
+            ] + met
         )
     return model
 
@@ -535,7 +540,7 @@ def train(train_ds, val_ds, class_weight=None):
         epochs=EPOCHS,
         class_weight=class_weight,
         callbacks=get_callbacks(),
-        verbose=2          # was 1; \r updates break tail -f
+        verbose=1,
     )
     return model, history
 
@@ -574,16 +579,17 @@ def evaluate(model, test_ds, threshold=None):
 
         y_prob_all = np.array(y_prob_all)
         y_pred     = np.argmax(y_prob_all, axis=1)
-        y_true     = np.array(y_true, dtype=int)
+        y_true     = np.array(y_true)
+        if y_true.ndim > 1:
+            y_true = np.argmax(y_true, axis=1)
+        y_true = y_true.astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
         print(classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0))
 
         cm = confusion_matrix(y_true, y_pred)
-        tn, fp, fn, tp = cm.ravel()
         print("── Matrice de confusion ──")
-        print(f"  TN={tn:>5}  FP={fp:>5}")
-        print(f"  FN={fn:>5}  TP={tp:>5}")
+        print(cm)
         f1_macro    = f1_score(y_true, y_pred, average="macro",    zero_division=0)
         f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
         print(f"F1 macro    : {f1_macro:.4f}   ← indicateur principal (classes déséquilibrées)")
