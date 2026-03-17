@@ -10,12 +10,9 @@ from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
     find_image_pairs_gcs,
-    split_samples,
-    split_pairs_by_event,
     extract_crops_to_disk,
     split_crops_dir_stratified,
-    build_dataset_from_dir,
-    compute_class_weights_from_dir,
+    build_dataset_from_dir
 )
 
 # ─────────────────────────────────────────────
@@ -97,12 +94,22 @@ if __name__ == "__main__":
     if DATA_DIR is None:
         raise ValueError("DATA_DIR environment variable must be set.")
 
+    # If CROPS_DIR is not empty, delete it to ensure a clean slate (idempotent — won't fail if it doesn't exist)
+    if CROPS_DIR and Path(CROPS_DIR).exists():
+        print(f"Cleaning up existing crops directory at {CROPS_DIR}...")
+        for item in Path(CROPS_DIR).glob("*"):
+            if item.is_dir():
+                tf.io.gfile.rmtree(str(item))
+            else:
+                item.unlink()
+
+    # ── 1. Build datasets
     train_ds, val_ds, test_ds = build_xview2_datasets(
         xview2_root=DATA_DIR,
         crops_dir=CROPS_DIR,
     )
 
-    # ── Lancement de l'entraînement
+     # ── 2. Train & Evaluate
     if MODEL_ARCHITECTURE == "efficientnet":
         model, history_warmup, history_finetune = train_efficientnet(train_ds, val_ds)
     elif MODEL_ARCHITECTURE in ("cnn_dual", "cnn_concat"):
