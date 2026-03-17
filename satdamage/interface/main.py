@@ -38,6 +38,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     # ── 1. Scan
     start_time = time.time()
     print("\n[1/5] Scan des paires d'images...")
+    print(f"  MODEL TARGET : {MODEL_TARGET}\n  DATA SOURCE : {xview2_root}")
     if MODEL_TARGET == "local":
         all_pairs = find_image_pairs(xview2_root)
     else:
