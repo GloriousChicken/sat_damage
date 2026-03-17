@@ -10,7 +10,7 @@ from tensorflow import keras
 from google.cloud import storage
 
 from satdamage.params import *
-
+from satdamage.ml_logic.model import BinaryF1Score
 
 def save_results(params: dict, metrics: dict) -> None:
     """
@@ -104,34 +104,35 @@ def load_model(model_name: str) -> keras.Model:
             blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
             if model_name in blob.name
         ]
-        # print(blobs)
 
         try:
             latest_blob = max(blobs, key=lambda x: x.updated)
-
             # Télécharger en mémoire sans toucher le disque
             buffer = BytesIO()
-            # print("Buffer initialisé pour le téléchargement du modèle depuis GCS...")
             latest_blob.download_to_file(buffer)
-            # print("Modèle téléchargé dans le buffer depuis GCS.")
             buffer.seek(0)
-            # print("Buffer prêt pour le chargement du modèle avec Keras.")
 
-            # print(f"Latest model in GCS bucket {BUCKET_NAME} is {latest_blob.name}, updated at {latest_blob.updated}")
             with tempfile.NamedTemporaryFile(suffix=".keras", delete=False) as tmp:
                 tmp.write(buffer.read())
                 tmp_path = tmp.name
 
             try:
-                latest_model = keras.models.load_model(tmp_path)
+                if MODEL_MODE == "binary":
+                    custom_objects = {"BinaryF1Score": BinaryF1Score()}
+                else:
+                    custom_objects = {}
+                latest_model = keras.models.load_model(
+                    tmp_path,
+                    custom_objects=custom_objects
+                    )
                 print(f"{latest_model.name} model loaded from GCS bucket {BUCKET_NAME}")
             except Exception as e:
                 print(f"Erreur lors du chargement du modèle : {type(e).__name__}: {e}")
                 raise
             finally:
-                os.remove(tmp_path)  # nettoyage garanti même en cas d'erreur
+                os.remove(tmp_path)
 
-            print("✅ Latest model downloaded from cloud storage")
+            print("\n✅ Latest model downloaded from cloud storage")
 
             return latest_model
         except:
