@@ -23,7 +23,7 @@ TEST_RATIO    = 0.15
 RANDOM_SEED   = 42
 BATCH_SIZE    = 32
 MAX_WORKERS = 8
-BALANCE_MAJORITY_RATIO = float(os.environ.get("BALANCE_MAJORITY_RATIO", "2.0"))
+BALANCE_MAJORITY_RATIO = 2
 
 # EfficientNet parameters
 EPOCHS_WARMUP   = 10
@@ -37,11 +37,11 @@ EPOCHS        = 50
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
-FOCAL_GAMMA   = 1.0   # was 0.0; re-enable focal — class_weight experiment failed
+FOCAL_GAMMA   = 1.5   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
 MODEL_NAMES = ["cnn_concat", "cnn_dual", "efficientnet"]
-MODEL_ARCHITECTURE = "cnn_concat"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 MODEL_MODE = "multiclass" # multiclass or binary
 NUM_CLASSES = len(DAMAGE_TO_CLASS)
 

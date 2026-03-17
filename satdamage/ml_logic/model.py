@@ -426,7 +426,7 @@ def compile_model(model: Model, learning_rate: float) -> Model:
     """
     opt = tf.keras.optimizers.AdamW(
         learning_rate = learning_rate,
-        weight_decay  = 1e-2,
+        weight_decay  = 1e-3,
         beta_1        = 0.9,
         beta_2        = 0.999,
         epsilon       = 1e-7,
@@ -439,13 +439,20 @@ def compile_model(model: Model, learning_rate: float) -> Model:
         # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
     ]
     if MODEL_MODE == "multiclass":
+        minority_recalls = [
+            tf.keras.metrics.Recall(
+                class_id=i,
+                name=f"recall_{CLASS_NAMES[i].replace('-', '_')}"
+            )
+            for i in range(1, NUM_CLASSES)
+        ]
         model.compile(
             optimizer = opt,
-            loss      = tf.keras.losses.CategoricalFocalCrossentropy(gamma=1.0, from_logits=False),
+            loss      = tf.keras.losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA, from_logits=False),
             metrics   = [
                 tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
                 tf.keras.metrics.F1Score(name="f1", average="macro"),
-            ] + met
+            ] + minority_recalls + met
         )
     else:
         model.compile(
@@ -471,7 +478,7 @@ def get_callbacks(phase: str = "warmup"):
         patience_es = 6  if phase == "warmup" else 10
         patience_lr = 3  if phase == "warmup" else 5
         ckpt_path = CHECKPOINT_PATH
-        monitor = "val_auc_pr"
+        monitor = "val_f1"
     else:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         ckpt_path = CHECKPOINT_PATH.replace(".keras", f"_{run_id}.keras")
@@ -487,7 +494,7 @@ def get_callbacks(phase: str = "warmup"):
             monitor=monitor,
             mode="max",
             min_delta=1e-3,
-            patience=20,           # was 12 — more room to train
+            patience=patience_es,           # was 12 — more room to train
             start_from_epoch=5,
             restore_best_weights=True,
             verbose=1
@@ -495,7 +502,7 @@ def get_callbacks(phase: str = "warmup"):
         ReduceLROnPlateau(
             monitor=monitor,
             factor=0.7,
-            patience=6,            # was 4 — give more room before cutting LR
+            patience=patience_lr,            # was 4 — give more room before cutting LR
             min_delta=5e-4,
             cooldown=1,
             min_lr=1e-6,
