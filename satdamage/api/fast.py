@@ -25,8 +25,12 @@ async def lifespan(app: FastAPI):
     """
     # Chargement au démarrage
     deb = time.time()
+
     for model_name in MODEL_NAMES:
-        models[model_name] = registry.load_model(model_name=model_name)
+        model = registry.load_model(model_name=model_name)
+        if model is not None:
+            models[model_name] = model
+
     fin = time.time()
     print(f"\n✅ All models loaded in {fin - deb:.2f} seconds.")
     yield
@@ -112,12 +116,8 @@ async def predict(files: List[UploadFile] = File(...)):
             }
 
     deb = time.time()
-    for model_name in MODEL_NAMES:
-        model = models.get(model_name)
-        if model is None:
-            raise HTTPException(status_code=400, detail=f"Model '{model_name}' not found.")
+    for model in models.values():
         prediction = model.predict(y)
-        print("Prediction", prediction)
         if MODEL_MODE=="binary":
             class_pred = (prediction > 0.5).astype(int).flatten()
         else:
