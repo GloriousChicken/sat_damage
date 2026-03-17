@@ -41,7 +41,7 @@ FOCAL_GAMMA   = 1.5   # was 0.0; re-enable focal — class_weight experiment fai
 
 # Model selection
 MODEL_NAMES = ["cnn_concat", "cnn_dual", "efficientnet"]
-MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
+MODEL_ARCHITECTURE = "cnn_concat"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 MODEL_MODE = "multiclass" # multiclass or binary
 NUM_CLASSES = len(DAMAGE_TO_CLASS)
 
@@ -51,7 +51,7 @@ LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
 DATA_DIR = os.environ.get("DATA_DIR")
-CROPS_DIR   = os.environ.get("CROPS_DIR", "data/crops")
+CROPS_DIR   = os.environ.get("CROPS_DIR")
 
 ##################  CLOUD VARIABLES  ############
 MODEL_TARGET = os.environ.get("MODEL_TARGET")
