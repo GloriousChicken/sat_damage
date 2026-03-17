@@ -1,18 +1,22 @@
 import time
 import gc
-import tensorflow as tf
 from pathlib import Path
+import numpy as np
+import tensorflow as tf
+
+from satdamage.params import *
+from satdamage.ml_logic.registry import *
+from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
     find_image_pairs_gcs,
+    split_samples,
+    split_pairs_by_event,
     extract_crops_to_disk,
     split_crops_dir_stratified,
     build_dataset_from_dir,
     compute_class_weights_from_dir,
 )
-from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import CROPS_DIR, DATA_DIR, MAX_WORKERS, MODEL_ARCHITECTURE, MODEL_TARGET
-from satdamage.ml_logic.registry import *
 
 # ─────────────────────────────────────────────
 # PIPELINE COMPLET
@@ -105,11 +109,9 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
-    print("Train done \n")
-
+    print("Training done \n")
     evaluate(model, test_ds)
 
-    import json, os
     metrics = {
         "f1_damaged":           0.0,    # fill after training
         "precision_damaged":    0.0,
