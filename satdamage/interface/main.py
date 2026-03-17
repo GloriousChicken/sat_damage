@@ -2,17 +2,20 @@ import time
 import gc
 import tensorflow as tf
 from pathlib import Path
+from satdamage.ml_logic.gpu_config import setup_gpu
 from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
-    find_image_pairs_gcs,
     extract_crops_to_disk,
     split_crops_dir_stratified,
     build_dataset_from_dir,
     compute_class_weights_from_dir,
 )
 from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import CROPS_DIR, DATA_DIR, MAX_WORKERS, MODEL_ARCHITECTURE, MODEL_TARGET
+from satdamage.params import CROPS_DIR, DATA_DIR, TRAIN_DATA_DIR, MAX_WORKERS, MODEL_ARCHITECTURE
 from satdamage.ml_logic.registry import *
+
+# Setup GPU before any TF operations
+setup_gpu()
 
 # ─────────────────────────────────────────────
 # PIPELINE COMPLET
@@ -34,10 +37,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
     # ── 1. Scan
     start_time = time.time()
     print("\n[1/5] Scan des paires d'images...")
-    if MODEL_TARGET == "local":
-        all_pairs = find_image_pairs(xview2_root)
-    else:
-        all_pairs = find_image_pairs_gcs(xview2_root)
+    all_pairs = find_image_pairs(xview2_root)
 
     if not all_pairs:
         raise FileNotFoundError(
@@ -89,11 +89,14 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if DATA_DIR is None:
-        raise ValueError("DATA_DIR environment variable must be set.")
+    # Use train data directory by default
+    xview2_root = TRAIN_DATA_DIR if Path(TRAIN_DATA_DIR).exists() else DATA_DIR
+    
+    print(f"Using data directory: {xview2_root}")
+    print(f"Data exists: {Path(xview2_root).exists()}")
 
     train_ds, val_ds, test_ds = build_xview2_datasets(
-        xview2_root=DATA_DIR,
+        xview2_root=xview2_root,
         crops_dir=CROPS_DIR,
     )
 

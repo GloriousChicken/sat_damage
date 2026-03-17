@@ -1,4 +1,7 @@
 import os
+import tensorflow as tf
+from pathlib import Path
+
 ##################  VARIABLES  ##################
 
 ##################  MAIN VARIABLES  #############
@@ -50,18 +53,21 @@ CHECKPOINT_PATH = f"checkpoints/satdamage_{MODEL_ARCHITECTURE}_best.keras"
 LOG_DIR         = f"logs/satdamage_{MODEL_ARCHITECTURE}"
 
 ####################  LOCAL PATH  ############
-DATA_DIR = os.environ.get("DATA_DIR")
-CROPS_DIR   = os.environ.get("CROPS_DIR", "data/crops")
+# PROJECT_ROOT is the satdamage package directory
+PROJECT_ROOT = Path(__file__).parent
+DATA_DIR = os.environ.get("DATA_DIR", str(PROJECT_ROOT / "challenge_dataset"))
+TRAIN_DATA_DIR = os.path.join(DATA_DIR, "train")
+TEST_DATA_DIR = os.path.join(DATA_DIR, "test")
+CROPS_DIR   = os.environ.get("CROPS_DIR", str(PROJECT_ROOT.parent / "data" / "crops"))
 
-##################  CLOUD VARIABLES  ############
-MODEL_TARGET = os.environ.get("MODEL_TARGET")
-GCP_PROJECT = os.environ.get("GCP_PROJECT")
-GCP_REGION = os.environ.get("GCP_REGION")
-BUCKET_NAME = os.environ.get("BUCKET_NAME")
-INSTANCE = os.environ.get("INSTANCE")
+# Always local (no GCP)
+MODEL_TARGET = "local"
 
-GAR_IMAGE = os.environ.get("GAR_IMAGE")
-GAR_MEMORY = os.environ.get("GAR_MEMORY")
+##################  GPU/M5 OPTIMIZATION  ############
+# Optimize for Apple Silicon M5
+USE_MIXED_PRECISION = True  # Use bfloat16 for faster training
+NUM_PARALLEL_CALLS = os.cpu_count() or 8
+PREFETCH_BUFFER_SIZE = tf.data.AUTOTUNE  # Auto-optimize prefetch
 
 ##################  CONSTANTS  #####################
 LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), "code", "GloriousChicken", "sat_damage", "checkpoints")
@@ -69,11 +75,11 @@ LOCAL_REGISTRY_PATH =  os.path.join(os.path.expanduser('~'), "code", "GloriousCh
 ##################  VALIDATIONS  ################
 
 env_valid_options = dict(
-    MODEL_TARGET=["local", "gcs"]
+    MODEL_TARGET=["local"]
 )
 
 def validate_env_value(env, valid_options):
-    env_value = os.environ[env]
+    env_value = os.environ.get(env, "local")
     if env_value not in valid_options:
         raise NameError(f"Invalid value for {env} in `.env` file: {env_value} must be in {valid_options}")
 

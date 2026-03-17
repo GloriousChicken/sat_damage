@@ -7,9 +7,6 @@ scipy
 tensorflow==2.16.2
 rasterio==1.4.4
 shapely==2.1.2
-google-cloud-storage==2.14.0
-google-api-core==2.8.2
-googleapis-common-protos==1.56.4
 imblearn
 python-dotenv
 psycopg2-binary

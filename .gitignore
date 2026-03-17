@@ -215,3 +215,7 @@ challenge_balanced/
 tiny_data/
 cuda-keyring_1.1-1_all.deb
 CLAUDE.md
+
+# Dataset - trop lourd pour git
+satdamage/challenge_dataset/
+data/crops/

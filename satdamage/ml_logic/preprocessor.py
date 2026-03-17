@@ -15,7 +15,6 @@ from sklearn.utils.class_weight import compute_class_weight
 from collections import Counter
 from typing import Any, List, Tuple, Dict, Optional, TypeVar
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from google.cloud import storage
 from imblearn.over_sampling import RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
 
@@ -32,11 +31,6 @@ Pipeline:
 SampleType = TypeVar("SampleType")
 
 
-if MODEL_TARGET == "gcs":
-    CLIENT = storage.Client()
-    BUCKET = CLIENT.bucket(BUCKET_NAME)
-
-
 # ─────────────────────────────────────────────
 # 1. PARSING DES ANNOTATIONS JSON xView2
 # ─────────────────────────────────────────────
@@ -44,17 +38,10 @@ if MODEL_TARGET == "gcs":
 def load_json_buildings(json_path: str) -> List[Dict]:
     """
     Loads building annotations from a JSON file and returns a list of building dicts with 'polygon' and 'damage' keys.
-    Supports both local files and GCS paths based on MODEL_TARGET.
+    Supports local files only.
     """
-    if MODEL_TARGET == "local":
-        with open(json_path, "r") as f:
-            data = json.load(f)
-    elif MODEL_TARGET == "gcs":
-        blob = BUCKET.blob(json_path)
-        data = json.loads(blob.download_as_text())
-    else:
-        print(f"[WARN] Unsupported MODEL_TARGET: {MODEL_TARGET}")
-        return []
+    with open(json_path, "r") as f:
+        data = json.load(f)
 
     buildings = []
     features = data.get("features", {}).get("xy", [])
@@ -293,68 +280,6 @@ def find_image_pairs(xview2_root: str) -> List[Dict[str, str]]:
             })
 
     print(f"[INFO] {len(pairs)} paires d'images trouvees")
-    return pairs
-
-
-# ─────────────────────────────────────────────
-# 4-2. SCAN DES PAIRES D'IMAGES xView2 SUR GCS
-# ─────────────────────────────────────────────
-
-def find_image_pairs_gcs(prefix: str = "") -> List[Dict[str, str]]:
-    """
-    Scans the xView2 dataset on a GCS bucket to find all valid image pairs and labels.
-    Returns a list of dicts with keys: 'pre_img', 'post_img', 'pre_label', 'post_label', 'event'.
-    """
-    pairs = []
-
-    all_blobs = set(
-        blob.name for blob in CLIENT.list_blobs(BUCKET_NAME, prefix=prefix)
-    )
-
-    if not all_blobs:
-        print(f"[WARN] Aucun fichier trouvé sous gs://{BUCKET_NAME}/{prefix}")
-        return pairs
-
-    post_blobs = sorted([
-        b for b in all_blobs
-        if "_post_disaster" in b and b.endswith((".png", ".tif", ".tiff"))
-        and "/images/" in b
-    ])
-
-    for post_img_blob_name in post_blobs:
-        parts = post_img_blob_name.rsplit("/", 1)
-        img_dir_prefix = parts[0]
-        filename = parts[1]
-
-        stem, ext = filename.rsplit(".", 1)
-        ext = f".{ext}"
-
-        pre_stem             = stem.replace("_post_disaster", "_pre_disaster")
-        label_dir_prefix     = img_dir_prefix.replace("/images", "/labels")
-        pre_img_blob_name    = f"{img_dir_prefix}/{pre_stem}{ext}"
-        pre_label_blob_name  = f"{label_dir_prefix}/{pre_stem}.json"
-        post_label_blob_name = f"{label_dir_prefix}/{stem}.json"
-
-        if pre_img_blob_name not in all_blobs:
-            print(f"[WARN] Image pre_disaster manquante : {pre_img_blob_name}")
-            continue
-        if pre_label_blob_name not in all_blobs:
-            print(f"[WARN] Label manquant : {pre_label_blob_name}")
-            continue
-        if post_label_blob_name not in all_blobs:
-            print(f"[WARN] Label manquant : {post_label_blob_name}")
-            continue
-
-        event = "_".join(stem.split("_")[:-2])
-        pairs.append({
-            "pre_img":    pre_img_blob_name,
-            "post_img":   post_img_blob_name,
-            "pre_label":  pre_label_blob_name,
-            "post_label": post_label_blob_name,
-            "event":      event
-        })
-
-    print(f"[INFO] {len(pairs)} paires trouvées dans gs://{BUCKET_NAME}/{prefix}")
     return pairs
 
 
