@@ -5,11 +5,11 @@ with open("requirements.txt") as f:
     content = f.readlines()
 requirements = [x.strip() for x in content if "git+" not in x]
 
-setup(name='sat_damage',
+setup(name='satdamage',
       version="0.0.1",
       description="Satellite Damage Model",
       license="MIT",
-      author="Sat Damage Team",
+      author="SatDamage Team",
       author_email="contact@lewagon.org",
       url="https://github.com/GloriousChicken/sat_damage",
       install_requires=requirements,
