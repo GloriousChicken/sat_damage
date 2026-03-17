@@ -4,7 +4,6 @@ import json
 import numpy as np
 import tensorflow as tf
 import rasterio
-from satdamage.params import *
 from pathlib import Path
 from PIL import Image
 from shapely.geometry import shape
@@ -17,6 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from google.cloud import storage
 from imblearn.over_sampling import RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
+from satdamage.params import *
 
 """
 Merged preprocessor: lazy disk-based pipeline (no OOM) + team augmentation improvements.
@@ -86,15 +86,35 @@ def load_json_buildings(json_path: str) -> List[Dict]:
 # ─────────────────────────────────────────────
 
 def _load_image(path: str) -> np.ndarray:
-    """Load PNG or TIFF as RGB uint8."""
-    p = Path(path)
-    if p.suffix.lower() in ['.tif', '.tiff']:
-        with rasterio.open(path) as src:
-            data = src.read()
-            rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
-            img = rgb.transpose(1, 2, 0)
-            return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
-    return np.array(Image.open(path).convert("RGB"))
+        """
+        Loads PNG or TIFF as RGB uint8.
+        """
+        p = Path(path)
+        if p.suffix.lower() in ['.tif', '.tiff']:
+            if MODEL_TARGET == "local":
+                with rasterio.open(path) as src:
+                    data = src.read()
+                    rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
+                    img = rgb.transpose(1, 2, 0)
+                    return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
+            else:
+                blob = BUCKET.blob(path)
+                bytes_data = blob.download_as_bytes()
+                with rasterio.MemoryFile(bytes_data) as memfile:
+                    with memfile.open() as src:
+                        data = src.read()
+                        rgb = data[:3] if data.shape[0] >= 3 else np.repeat(data[[0]], 3, axis=0)
+                        img = rgb.transpose(1, 2, 0)
+                        return np.clip(img, 0, 255).astype(np.uint8) if img.dtype != np.uint8 else img
+        else:
+            if MODEL_TARGET == "local":
+                return np.array(Image.open(path).convert("RGB"))
+            else:
+                blob = BUCKET.blob(path)
+                bytes_data = blob.download_as_bytes()
+                return np.array(Image.open(BytesIO(bytes_data)).convert("RGB"))
+
+        return np.zeros((256, 256, 3), dtype=np.uint8)
 
 
 def _scale_band(band: np.ndarray) -> np.ndarray:
@@ -396,11 +416,18 @@ def extract_crops_to_disk(
             completed    += 1
 
             if verbose and completed % 50 == 0:
-                print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
+                print(f"[{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
-    n0 = len(list((split_dir / "0").glob("*.png"))) if (split_dir / "0").exists() else 0
-    n1 = len(list((split_dir / "1").glob("*.png"))) if (split_dir / "1").exists() else 0
-    print(f"  [{split_name}] Done: {total_crops} crops — Undamaged: {n0} | Damaged: {n1} | Errors: {total_errors}")
+    if MODEL_MODE == "multiclass":
+        n0 = len(list((split_dir/"0").glob("*.png"))) if (split_dir / "0").exists() else 0
+        n1 = len(list((split_dir/"1").glob("*.png"))) if (split_dir / "1").exists() else 0
+        n2 = len(list((split_dir/"2").glob("*.png"))) if (split_dir / "2").exists() else 0
+        n3 = len(list((split_dir/"3").glob("*.png"))) if (split_dir / "3").exists() else 0
+        print(f"[{split_name}] Done: {total_crops} crops - Undamaged: {n0} - Minor-damage: {n1} - Major-damage: {n2} - Destroyed: {n3} - Errors: {total_errors}")
+    else:
+        n0 = len(list((split_dir/"0").glob("*.png"))) if (split_dir / "0").exists() else 0
+        n1 = len(list((split_dir/"1").glob("*.png"))) if (split_dir / "1").exists() else 0
+        print(f"[{split_name}] Done: {total_crops} crops - Undamaged: {n0} - Damaged: {n1} - Errors: {total_errors}")
 
     return total_crops, total_errors
 

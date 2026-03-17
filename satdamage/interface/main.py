@@ -1,24 +1,24 @@
 import os
-import numpy as np
+import json
 import time
-from satdamage.ml_logic.preprocessor import find_image_pairs, find_image_pairs_gcs, split_samples, split_pairs_by_event
-from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import MODEL_TARGET, DATA_DIR, MODEL_ARCHITECTURE
-from satdamage.ml_logic.registry import *
-import gc
-import tensorflow as tf
 from pathlib import Path
+import gc
+import numpy as np
+import tensorflow as tf
+
+from satdamage.params import *
+from satdamage.ml_logic.registry import *
+from satdamage.ml_logic.model import train, evaluate, train_efficientnet
 from satdamage.ml_logic.preprocessor import (
     find_image_pairs,
     find_image_pairs_gcs,
+    split_samples,
+    split_pairs_by_event,
     extract_crops_to_disk,
     build_dataset_from_dir,
     compute_class_weights,
     compute_class_weights_from_dir,
 )
-from satdamage.ml_logic.model import train, evaluate, train_efficientnet
-from satdamage.params import MODEL_TARGET, DATA_DIR, BATCH_SIZE, MODEL_ARCHITECTURE
-from satdamage.ml_logic.registry import *
 
 # ─────────────────────────────────────────────
 # PIPELINE COMPLET
@@ -55,7 +55,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
     # ── 2. Split by event (no data leakage between disaster events)
     print("\n[2/5] Split par evenement (sans data leakage)...")
-    train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs)
+    train_pairs, val_pairs, test_pairs = split_pairs_by_event(all_pairs[:20])
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 3. Extract crops to disk (lazy pipeline — idempotent)
@@ -66,7 +66,7 @@ def build_xview2_datasets(xview2_root: str, crops_dir: str):
 
     # ── 4. Class weights — passed to model.fit() to compensate for imbalance
     print("\n[4/5] Distribution des classes (class_weight)...")
-    class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
+    class_weights = compute_class_weights_from_dir(str(Path(crops_dir)/"train"))
     print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
     print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
 
@@ -104,11 +104,9 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Architecture inconnue : {MODEL_ARCHITECTURE}")
 
-    print("Train done \n")
-
+    print("Training done \n")
     evaluate(model, test_ds)
 
-    import json, os
     metrics = {
         "f1_damaged":           0.0,    # fill after training
         "precision_damaged":    0.0,
