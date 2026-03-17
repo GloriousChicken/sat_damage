@@ -8,7 +8,7 @@ files = [('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/sample
     ('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/samples/labels/hurricane-florence_00000147_pre_disaster.json', 'rb')),
     ('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/samples/labels/hurricane-florence_00000147_post_disaster.json', 'rb'))
     ]
-resp = requests.post(url=url, params={"model_name": "efficientnet"}, files=files, timeout=60)
+resp = requests.post(url=url, files=files, timeout=60)
 print(resp.status_code)
 print(resp.text)
 if resp.ok and resp.text:

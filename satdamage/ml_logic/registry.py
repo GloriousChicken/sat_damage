@@ -88,15 +88,16 @@ def load_model(model_name: str) -> keras.Model:
 
         most_recent_model_path_on_disk = sorted(local_model_paths)[-1]
 
+        deb = time.time()
         print(Fore.BLUE + f"\nLoad latest model from disk..." + Style.RESET_ALL)
-
         latest_model = keras.models.load_model(most_recent_model_path_on_disk)
-
-        print("✅ Model loaded from local disk")
+        fin = time.time()
+        print(f"✅ Model loaded from local disk in {fin - deb:.2f} seconds.")
 
         return latest_model
 
     elif MODEL_TARGET == "gcs":
+        deb = time.time()
         print(Fore.BLUE + f"\nLoad latest model from GCS..." + Style.RESET_ALL)
 
         client = storage.Client()
@@ -125,7 +126,9 @@ def load_model(model_name: str) -> keras.Model:
                     tmp_path,
                     custom_objects=custom_objects
                     )
-                print(f"{latest_model.name} model loaded from GCS bucket {BUCKET_NAME}")
+                fin = time.time()
+                print(f"Model {latest_model.name} loaded from GCS bucket {BUCKET_NAME} in {fin - deb:.2f} seconds.")
+
             except Exception as e:
                 print(f"Erreur lors du chargement du modèle : {type(e).__name__}: {e}")
                 raise

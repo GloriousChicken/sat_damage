@@ -14,8 +14,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from satdamage.ml_logic import registry
 from satdamage.ml_logic.preprocessor import _polygon_to_bbox, crop_building
 from satdamage.params import MODEL_NAMES, DAMAGE_TO_BINARY, DAMAGE_TO_CLASS, MODEL_MODE
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+models = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan function to load models at startup and clean up at shutdown.
+    """
+    # Chargement au démarrage
+    deb = time.time()
+    for model_name in MODEL_NAMES:
+        models[model_name] = registry.load_model(model_name=model_name)
+    fin = time.time()
+    print(f"\n✅ All models loaded in {fin - deb:.2f} seconds.")
+    yield
+    # Nettoyage à l'arrêt (optionnel)
+    models.clear()
+
+app = FastAPI(lifespan=lifespan)
+
 # Allowing all middleware is optional, but good practice for dev purposes
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +45,7 @@ app.add_middleware(
 )
 
 @app.post("/predict")
-async def predict(files: List[UploadFile] = File(...), model_name: str = Query(...)):
+async def predict(files: List[UploadFile] = File(...)):
     """
     Endpoint pour uploader une paire d'images pré/post et leurs labels associés.
     Attendu : 4 fichiers - pré/post image (TIFF) + pré/post label (JSON)
@@ -40,9 +59,6 @@ async def predict(files: List[UploadFile] = File(...), model_name: str = Query(.
 
     if len(files) != 4:
         raise HTTPException(status_code=400, detail='Exactly 4 files are required: pre-disaster image, post-disaster image, and label file.')
-
-    if model_name not in MODEL_NAMES:
-        raise HTTPException(status_code=400, detail=f'Model name must be one of {MODEL_NAMES}.')
 
     pre_img    = None
     post_img   = None
@@ -84,41 +100,33 @@ async def predict(files: List[UploadFile] = File(...), model_name: str = Query(.
     post_crops = np.array([crop_building(post_img, _polygon_to_bbox(b["polygon"], w, h)) for b in buildings_post])
     y = np.concatenate([pre_crops, post_crops], axis=-1)
 
-    deb = time.time()
-
-    # Libérer explicitement avant de charger le nouveau
-    if hasattr(app.state, 'model'):
-        del app.state.model
-    gc.collect()
-
-    # Pour GPU (Keras/TF)
-    tf.keras.backend.clear_session()
-
-    # Charger le modèle depuis le registry
-    app.state.model = registry.load_model(model_name=model_name)
-    fin = time.time()
-
-    if app.state.model is None:
-        raise HTTPException(status_code=500, detail=f'Model {model_name} could not be loaded.')
-
-    print(f"Model {model_name} loaded in {fin - deb:.2f} seconds.")
-
-    # Prediction from y data (pre/post crops concatenated)
-    deb = time.time()
-    prediction = app.state.model.predict(y)
-    fin = time.time()
-    print(f"Prediction run in {fin - deb:.2f} seconds.")
-
     if MODEL_MODE == "multiclass":
         result = {
-            i: [DAMAGE_TO_CLASS.get(building["properties"]["subtype"]), float(prediction[i])]
+            i: [DAMAGE_TO_CLASS.get(building["properties"]["subtype"])]
             for i, building in enumerate(post_label["features"]["xy"])
             }
     else:
         result = {
-            i: [DAMAGE_TO_BINARY.get(building["properties"]["subtype"]), float(prediction[i])]
+            i: [DAMAGE_TO_BINARY.get(building["properties"]["subtype"])]
             for i, building in enumerate(post_label["features"]["xy"])
             }
+
+    deb = time.time()
+    for model_name in MODEL_NAMES:
+        model = models.get(model_name)
+        if model is None:
+            raise HTTPException(status_code=400, detail=f"Model '{model_name}' not found.")
+        prediction = model.predict(y)
+        print("Prediction", prediction)
+        if MODEL_MODE=="binary":
+            class_pred = (prediction > 0.5).astype(int).flatten()
+        else:
+            class_pred = np.argmax(prediction, axis=-1)
+        for i, _key in enumerate(result.keys()):
+            result[i].append(int(class_pred[i]))
+
+    fin = time.time()
+    print(f"Prediction run in {fin - deb:.2f} seconds.")
 
     return result
 
