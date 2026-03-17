@@ -9,21 +9,20 @@ import numpy as np
 import os
 from datetime import datetime
 import tensorflow as tf
-import keras
-from tensorflow.keras import layers, Model, regularizers
+from tensorflow.keras import layers, Model, regularizers, metrics, backend, ops, optimizers, losses
 from tensorflow.keras.applications import EfficientNetV2B0
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, TensorBoard
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from satdamage.params import *
 
 
-class BinaryF1Score(tf.keras.metrics.Metric):
+class BinaryF1Score(metrics.Metric):
     """F1 metric compatible with binary sigmoid output (None, 1) and flat labels (None,)."""
     def __init__(self, threshold=0.5, name="f1", **kwargs):
         super().__init__(name=name, **kwargs)
         self.threshold = threshold
-        self.precision = tf.keras.metrics.Precision(thresholds=threshold)
-        self.recall    = tf.keras.metrics.Recall(thresholds=threshold)
+        self.precision = metrics.Precision(thresholds=threshold)
+        self.recall    = metrics.Recall(thresholds=threshold)
 
     def update_state(self, y_true, y_pred, sample_weight=None):
         self.precision.update_state(y_true, y_pred, sample_weight)
@@ -32,7 +31,7 @@ class BinaryF1Score(tf.keras.metrics.Metric):
     def result(self):
         p = self.precision.result()
         r = self.recall.result()
-        return 2 * p * r / (p + r + tf.keras.backend.epsilon())
+        return 2 * p * r / (p + r + backend.epsilon())
 
     def reset_state(self):
         self.precision.reset_state()
@@ -385,7 +384,7 @@ def build_damage_cnn_dual(input_shape=(128, 128, 6)):
 
     # ── Explicit change signal: |post - pre|
     diff = layers.Subtract(name="subtract")([post_feat, pre_feat])
-    diff = tf.keras.ops.abs(diff)
+    diff = ops.abs(diff)
 
     # ── Merge: concatenate all three feature maps → (batch, 16, 16, 384)
     merged = layers.Concatenate(name="merge")([pre_feat, post_feat, diff])
@@ -424,7 +423,7 @@ def compile_model(model: Model, learning_rate: float) -> Model:
     Compile avec AdamW et métriques.
     Appelée deux fois pour EfficientNet : une fois au warm-up, une fois au fine-tuning.
     """
-    opt = tf.keras.optimizers.AdamW(
+    opt = optimizers.AdamW(
         learning_rate = learning_rate,
         weight_decay  = 1e-3,
         beta_1        = 0.9,
@@ -432,15 +431,15 @@ def compile_model(model: Model, learning_rate: float) -> Model:
         epsilon       = 1e-7,
     )
     met = [
-        tf.keras.metrics.Precision(name="precision"),
-        tf.keras.metrics.Recall(name="recall"),
-        tf.keras.metrics.AUC(name="auc"),
-        tf.keras.metrics.AUC(name="auc_pr", curve="PR"),
+        metrics.Precision(name="precision"),
+        metrics.Recall(name="recall"),
+        metrics.AUC(name="auc"),
+        metrics.AUC(name="auc_pr", curve="PR"),
         # AUC-PR est plus informatif qu'AUC-ROC sur données déséquilibrées
     ]
     if MODEL_MODE == "multiclass":
         minority_recalls = [
-            tf.keras.metrics.Recall(
+            metrics.Recall(
                 class_id=i,
                 name=f"recall_{CLASS_NAMES[i].replace('-', '_')}"
             )
@@ -448,19 +447,19 @@ def compile_model(model: Model, learning_rate: float) -> Model:
         ]
         model.compile(
             optimizer = opt,
-            loss      = tf.keras.losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA, from_logits=False),
+            loss      = losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA, from_logits=False),
             metrics   = [
-                tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
-                tf.keras.metrics.F1Score(name="f1", average="macro"),
+                metrics.CategoricalAccuracy(name="accuracy"),
+                metrics.F1Score(name="f1", average="macro"),
             ] + minority_recalls + met
         )
     else:
         model.compile(
             optimizer = opt,
-            # loss      = tf.keras.losses.BinaryCrossentropy(),
-            loss      = tf.keras.losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA, label_smoothing=0.05),
+            # loss      = losses.BinaryCrossentropy(),
+            loss      = losses.BinaryFocalCrossentropy(gamma=FOCAL_GAMMA, label_smoothing=0.05),
             metrics   = [
-                tf.keras.metrics.BinaryAccuracy(name="accuracy"),
+                metrics.BinaryAccuracy(name="accuracy"),
                 BinaryF1Score(name="f1", threshold=0.5),
             ] + met
         )
