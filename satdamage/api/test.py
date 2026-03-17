@@ -2,7 +2,8 @@ import time
 import requests
 
 deb = time.time()
-url = 'http://127.0.0.1:8000/predict'
+# url = 'http://127.0.0.1:8000/predict'
+url = 'https://satdamage-71289071251.europe-west1.run.app/predict'
 files = [('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/samples/images/hurricane-florence_00000147_pre_disaster.tif', 'rb')),
     ('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/samples/images/hurricane-florence_00000147_post_disaster.tif', 'rb')),
     ('files', open('/home/tonio/code/GloriousChicken/sat_damage/data/samples/labels/hurricane-florence_00000147_pre_disaster.json', 'rb')),
