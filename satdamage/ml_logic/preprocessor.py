@@ -422,16 +422,11 @@ def extract_crops_to_disk(
             if verbose and completed % 10 == 0:
                 print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
-    if MODEL_MODE == "multiclass":
-        n0 = len(list((split_dir/"0").glob("*.png"))) if (split_dir / "0").exists() else 0
-        n1 = len(list((split_dir/"1").glob("*.png"))) if (split_dir / "1").exists() else 0
-        n2 = len(list((split_dir/"2").glob("*.png"))) if (split_dir / "2").exists() else 0
-        n3 = len(list((split_dir/"3").glob("*.png"))) if (split_dir / "3").exists() else 0
-        print(f"[{split_name}] Done: {total_crops} crops - Undamaged: {n0} - Minor-damage: {n1} - Major-damage: {n2} - Destroyed: {n3} - Errors: {total_errors}")
-    else:
-        n0 = len(list((split_dir/"0").glob("*.png"))) if (split_dir / "0").exists() else 0
-        n1 = len(list((split_dir/"1").glob("*.png"))) if (split_dir / "1").exists() else 0
-        print(f"[{split_name}] Done: {total_crops} crops - Undamaged: {n0} - Damaged: {n1} - Errors: {total_errors}")
+    n_list = []
+    for i in range(NUM_CLASSES if MODEL_MODE == "multiclass" else 2):
+        n_list.append(len(list((split_dir/str(i)).glob("*.png"))) if (split_dir/str(i)).exists() else 0)
+    class_summary = " - ".join(f"Class {cls}: {i}" for cls, i in enumerate(n_list))
+    print(f"[{split_name}] Done: {total_crops} crops - {class_summary} - Errors: {total_errors}")
 
     return total_crops, total_errors
 
@@ -480,14 +475,15 @@ def split_samples(
     )
 
     print(f"\n[INFO] Stratified Split (Crop-Level):")
-    if MODEL_MODE == "multiclass":
-        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Minor-damage: {train_labels.count(1)}, Major-damage: {train_labels.count(2)}, Damaged: {train_labels.count(3)})")
-        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Minor-damage: {val_labels.count(1)}, Major-damage: {val_labels.count(2)}, Damaged: {val_labels.count(3)})")
-        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Minor-damage: {test_labels.count(1)}, Major-damage: {test_labels.count(2)}, Damaged: {test_labels.count(3)})")
-    else:
-        print(f"Train : {len(train_samples):>6} crops (Undamaged: {train_labels.count(0)}, Damaged: {train_labels.count(1)})")
-        print(f"Val   : {len(val_samples):>6} crops (Undamaged: {val_labels.count(0)}, Damaged: {val_labels.count(1)})")
-        print(f"Test  : {len(test_samples):>6} crops (Undamaged: {test_labels.count(0)}, Damaged: {test_labels.count(1)})")
+    counts = Counter(train_labels)
+    class_summary = " | ".join(f"Class {cls}: {counts.get(cls, 0)}" for cls in sorted(counts.keys()))
+    print(f"Train : {len(train_samples):>6} crops - {class_summary}")
+    counts = Counter(val_labels)
+    class_summary = " | ".join(f"Class {cls}: {counts.get(cls, 0)}" for cls in sorted(counts.keys()))
+    print(f"Val   : {len(val_samples):>6} crops - {class_summary}")
+    counts = Counter(test_labels)
+    class_summary = " | ".join(f"Class {cls}: {counts.get(cls, 0)}" for cls in sorted(counts.keys()))
+    print(f"Test  : {len(test_samples):>6} crops - {class_summary}")
 
     return train_samples, val_samples, test_samples, train_labels, val_labels, test_labels
 
