@@ -409,6 +409,7 @@ def build_segmentation_dataset(
 
     total_buildings = 0
     errors          = 0
+    no_building_image_count = 0
 
     for i, record in enumerate(records):
         if verbose and i % 100 == 0:
@@ -427,6 +428,7 @@ def build_segmentation_dataset(
             lines = image_to_yolo_seg_label(post_label_path, image_w, image_h)
 
             if not lines:
+                no_building_image_count += 1
                 continue    # Image sans bâtiment annoté → ignorer
 
             # ── Copier l'image
@@ -445,6 +447,7 @@ def build_segmentation_dataset(
                 print(f"  [ERROR] {Path(record['post_img']).name} → {e}")
 
     if verbose:
+        print(f"  Images ignored (no buildings) {no_building_image_count}")
         print(f"  [SEG/{split_name}] {len(records)} images | "
               f"{total_buildings} bâtiments | {errors} erreurs")
 
@@ -516,6 +519,8 @@ def build_classification_dataset(
 
     stats  = Counter()
     errors = 0
+    no_label_building_count = 0
+    crop_too_small_count = 0
 
     for i, record in enumerate(records):
         if verbose and i % 100 == 0:
@@ -537,11 +542,13 @@ def build_classification_dataset(
                 label  = PrepConfig.DAMAGE_TO_LABEL.get(damage, None)
 
                 if label is None:
+                    no_label_building_count += 1
                     continue    # "un-classified" → ignorer
 
                 # ── Extraire le crop
                 crop = polygon_to_crop(post_img, b["polygon"])
                 if crop is None:
+                    crop_too_small_count += 1
                     continue
 
                 # ── Sauvegarder dans le dossier de la classe
@@ -558,6 +565,8 @@ def build_classification_dataset(
                 print(f"  [ERROR] {Path(record['post_img']).name} → {e}")
 
     if verbose:
+        print(f"  Buildings without label {no_label_building_count}")
+        print(f"  Crops too small {crop_too_small_count}")
         total = sum(stats.values())
         print(f"\n  [CLS/{split_name}] {total} crops  | {errors} erreurs")
         for cls_name in PrepConfig.CLASS_NAMES:

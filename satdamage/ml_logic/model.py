@@ -193,6 +193,7 @@ def train_efficientnet(train_ds, val_ds, class_weights=None):
 
     # Recompiler obligatoire après modification de trainable
     model = compile_model(model, LR_FINETUNE)
+    model.summary()
 
     history_finetune = model.fit(
         train_ds,
