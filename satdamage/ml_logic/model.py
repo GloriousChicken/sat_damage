@@ -8,6 +8,7 @@ Input:   paires d'images pré/post-catastrophe (6 canaux)
 import numpy as np
 import os
 import json
+import time
 from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers, metrics, backend, ops, optimizers, losses
@@ -641,9 +642,13 @@ def evaluate_light(model, test_ds, threshold=None):
     """
     if MODEL_MODE == "multiclass":
         y_true, y_prob_all = [], []
+        deb = time.time()
+        n_batches = sum(1 for _ in test_ds)
+        fin = time.time()
+        print(f"Nombre de batches dans test_ds : {n_batches} \n(estimation {fin - deb:.2f} sec pour parcourir les batches sans prédiction)")
         for i, (images, labels) in enumerate(test_ds):
             if i % 10 == 0:
-                print(f"  Évaluation batch {i+1}/{len(test_ds)}...")
+                print(f"  Évaluation batch {i+1}/{n_batches}...")
             probs = model.predict(images, verbose=0)   # shape (batch, 4)
             y_prob_all.extend(probs)
             y_true.extend(labels.numpy())
