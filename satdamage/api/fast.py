@@ -233,6 +233,7 @@ def list_models():
     """
     return {
         name: {
+            "name": str(m.name),
             "input_shape":  str(m.input_shape),
             "output_shape": str(m.output_shape),
         }
