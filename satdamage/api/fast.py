@@ -16,7 +16,8 @@ from satdamage.ml_logic.preprocessor import _polygon_to_bbox, crop_building
 from satdamage.params import MODEL_NAMES, DAMAGE_TO_BINARY, DAMAGE_TO_CLASS, MODEL_MODE
 from contextlib import asynccontextmanager
 
-models = {}
+# ── Model registry
+models: Dict[str, tf.keras.Model] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -25,17 +26,18 @@ async def lifespan(app: FastAPI):
     """
     # Chargement au démarrage
     deb = time.time()
-
-    for model_name in MODEL_NAMES:
-        model = registry.load_model(model_name=model_name)
+    for name in MODEL_NAMES:
+        model = registry.load_model(model_name=name)
         if model is not None:
-            models[model_name] = model
-
+            models[name] = model
+            print(f"  ✅ {name} loaded  (input: {model.input_shape}  output: {model.output_shape})")
+        else:
+            print(f"  ⚠️  {name} not found — skipped")
     fin = time.time()
-    print(f"\n✅ All models loaded in {fin - deb:.2f} seconds.")
+    print(f"\n✅ All models ready in {fin - deb:.2f} seconds.")
     yield
-    # Nettoyage à l'arrêt (optionnel)
     models.clear()
+    gc.collect()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -48,92 +50,196 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+
+# ── Helpers
+def load_json_buildings(data: dict) -> List[Dict]:
+    """
+    Load building polygons and properties from JSON data.
+     - data: dict loaded from JSON file, expected to have "features" -> "xy" list
+    Returns: list of dicts with "polygon" (shapely geometry) and "properties" (dict)
+    """
+    return [
+        {"polygon": shapely_wkt.loads(f["wkt"]), "properties": f.get("properties", {})}
+        for f in data["features"]["xy"]
+    ]
+
+
+def load_image(content: bytes, filename: str) -> np.ndarray:
+    """
+    Load image from bytes content, supporting TIFF and PNG formats.
+     - content: bytes of the image file
+     - filename: used to determine the format
+    Returns: HxWxC image array
+    """
+    if filename.endswith((".tif", ".tiff")):
+        with rasterio.open(BytesIO(content)) as src:
+            return src.read().transpose(1, 2, 0)
+    elif filename.endswith(".png"):
+        return np.array(Image.open(BytesIO(content)).convert("RGB"))
+    raise HTTPException(status_code=400, detail=f"Unsupported format: {filename}")
+
+
+def build_crops(img: np.ndarray, buildings: List[Dict]) -> np.ndarray:
+    """
+    Crop building images based on their polygons.
+     - img: HxWxC image array
+     - buildings: list of dicts with "polygon" and "properties"
+    Returns: array of cropped building images
+    """
+    h, w = img.shape[:2]
+    return np.array([
+        crop_building(img, _polygon_to_bbox(b["polygon"], w, h))
+        for b in buildings
+    ])
+
+
+def get_input(model_name: str, pre_crops: np.ndarray, post_crops: np.ndarray) -> np.ndarray:
+    """
+    Route input based on what the model actually expects — read from input_shape.
+     - If model expects 6 channels, concatenate pre/post crops
+     - If model expects 3 channels, use post crops only
+     - Otherwise, raise an error
+    """
+    expected_channels = models[model_name].input_shape[-1]
+    if expected_channels == 6:
+        return np.concatenate([pre_crops, post_crops], axis=-1)
+    elif expected_channels == 3:
+        return post_crops
+    raise HTTPException(
+        status_code=500,
+        detail=f"Unexpected input channels for {model_name}: {expected_channels}"
+    )
+
+
+def get_ground_truth(buildings_post: List[Dict], mode: str) -> Dict[int, list]:
+    mapping = DAMAGE_TO_CLASS if mode == "multiclass" else DAMAGE_TO_BINARY
+    return {
+        i: [mapping.get(b["properties"].get("subtype", "no-damage"), 0)]
+        for i, b in enumerate(buildings_post)
+    }
+
+
 @app.post("/predict")
-async def predict(files: List[UploadFile] = File(...)):
+async def predict(
+    files: List[UploadFile] = File(...),
+    model: str = Query(default="efficientnet", description="Model to use for inference"),
+):
     """
-    Endpoint pour uploader une paire d'images pré/post et leurs labels associés.
-    Attendu : 4 fichiers - pré/post image (TIFF) + pré/post label (JSON)
-    """
-    def api_load_json_buildings(data: dict) -> List[Dict]:
-        """
-        Loads building annotations from a JSON file and returns a list of building dicts with 'polygon' key.
-        """
-        features = data["features"]["xy"]
-        return [{"polygon": shapely_wkt.loads(feature["wkt"])} for feature in features]
+    Expects 4 files via multipart/form-data:
+      - pre_disaster image  (.png / .tif)
+      - post_disaster image (.png / .tif)
+      - pre_disaster label  (.json, xBD format)
+      - post_disaster label (.json, xBD format)
 
+    Optional query param: ?model=cnn_concat | cnn_dual | efficientnet
+
+    Returns:
+      {
+        "model": "cnn_concat",
+        "mode":  "multiclass",
+        "buildings": [
+          {"index": 0, "ground_truth": 0, "prediction": 1, "confidence": 0.87},
+          ...
+        ]
+      }
+    """
     if len(files) != 4:
-        raise HTTPException(status_code=400, detail='Exactly 4 files are required: pre-disaster image, post-disaster image, and label file.')
+        raise HTTPException(status_code=400, detail='Exactly 4 files are required.')
 
-    pre_img    = None
-    post_img   = None
-    pre_label  = None
-    post_label = None
+    if model not in models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model}' not loaded. Available: {list(models.keys())}"
+        )
+
+    # ── Parse uploads
+    pre_img = post_img = pre_label = post_label = None
 
     for file in files:
         content = await file.read()
-        if file.filename.endswith(".json"):
-            if "pre_disaster" in file.filename:
-                pre_label = json.loads(content)
-            elif "post_disaster" in file.filename:
-                post_label = json.loads(content)
-        else:
-            if file.filename.endswith((".tif", ".tiff")):
-                with rasterio.open(BytesIO(content)) as src:
-                    img = src.read()
-                if "pre_disaster" in file.filename:
-                    pre_img = img.transpose(1, 2, 0)
-                elif "post_disaster" in file.filename:
-                    post_img = img.transpose(1, 2, 0)
-                else:
-                    raise HTTPException(status_code=400, detail='Image files must contain "pre_disaster" or "post_disaster" in their filename.')
-            elif file.filename.endswith(".png"):
-                img = Image.open(BytesIO(content)).convert("RGB")
-                if "pre_disaster" in file.filename:
-                    pre_img = np.array(img)
-                elif "post_disaster" in file.filename:
-                    post_img = np.array(img)
-                else:
-                    raise HTTPException(status_code=400, detail='Image files must contain "pre_disaster" or "post_disaster" in their filename.')
+        fname = file.filename
+
+        if fname.endswith(".json"):
+            data = json.loads(content)
+            if "pre_disaster" in fname:
+                pre_label = data
+            elif "post_disaster" in fname:
+                post_label = data
             else:
-                raise HTTPException(status_code=400, detail='Unsupported file type. Only TIFF and PNG are allowed.')
-
-    h, w = pre_img.shape[:2]
-    buildings_pre = api_load_json_buildings(pre_label)
-    buildings_post = api_load_json_buildings(post_label)
-    pre_crops  = np.array([crop_building(pre_img,  _polygon_to_bbox(b["polygon"], w, h)) for b in buildings_pre])
-    post_crops = np.array([crop_building(post_img, _polygon_to_bbox(b["polygon"], w, h)) for b in buildings_post])
-    y = np.concatenate([pre_crops, post_crops], axis=-1)
-
-    if MODEL_MODE == "multiclass":
-        result = {
-            i: [DAMAGE_TO_CLASS.get(building["properties"]["subtype"])]
-            for i, building in enumerate(post_label["features"]["xy"])
-            }
-    else:
-        result = {
-            i: [DAMAGE_TO_BINARY.get(building["properties"]["subtype"])]
-            for i, building in enumerate(post_label["features"]["xy"])
-            }
-
-    deb = time.time()
-    for model in models.values():
-        prediction = model.predict(y)
-        if MODEL_MODE=="binary":
-            class_pred = (prediction > 0.5).astype(int).flatten()
+                raise HTTPException(status_code=400, detail=f"JSON filename must contain 'pre_disaster' or 'post_disaster': {fname}")
         else:
-            class_pred = np.argmax(prediction, axis=-1)
-        for i, _key in enumerate(result.keys()):
-            result[i].append(int(class_pred[i]))
+            img = load_image(content, fname)
+            if "pre_disaster" in fname:
+                pre_img = img
+            elif "post_disaster" in fname:
+                post_img = img
+            else:
+                raise HTTPException(status_code=400, detail=f"Image filename must contain 'pre_disaster' or 'post_disaster': {fname}")
 
+    for name, val in [("pre_img", pre_img), ("post_img", post_img),
+                      ("pre_label", pre_label), ("post_label", post_label)]:
+        if val is None:
+            raise HTTPException(status_code=400, detail=f"Missing: {name}")
+
+    # ── Build crops
+    buildings_pre  = load_json_buildings(pre_label)
+    buildings_post = load_json_buildings(post_label)
+    pre_crops  = build_crops(pre_img,  buildings_pre)
+    post_crops = build_crops(post_img, buildings_post)
+
+    # ── Select input tensor based on model's actual input shape
+    x = get_input(model, pre_crops, post_crops)
+
+    # ── Inference
+    deb = time.time()
+    raw_preds = models[model].predict(x, batch_size=32, verbose=0)
     fin = time.time()
-    print(f"Prediction run in {fin - deb:.2f} seconds.")
+    print(f"Inference ({model}, input:{x.shape}) on {len(x)} crops: {fin-deb:.2f}s")
 
-    return result
+    # ── Decode predictions
+    mode = MODEL_MODE
+    if mode == "binary":
+        class_preds = (raw_preds > 0.5).astype(int).flatten()
+        confidences = np.where(class_preds == 1, raw_preds.flatten(), 1 - raw_preds.flatten())
+    else:
+        class_preds = np.argmax(raw_preds, axis=-1)
+        confidences = raw_preds[np.arange(len(raw_preds)), class_preds]
+
+    # ── Ground truth
+    gt = get_ground_truth(buildings_post, mode)
+
+    # ── Build response
+    buildings_out = [
+        {
+            "index":        i,
+            "ground_truth": gt[i][0],
+            "prediction":   int(class_preds[i]),
+            "confidence":   round(float(confidences[i]), 4),
+        }
+        for i in range(len(buildings_post))
+    ]
+
+    return {
+        "model":     model,
+        "mode":      mode,
+        "buildings": buildings_out,
+    }
+
+
+@app.get("/models")
+def list_models():
+    """
+    Returns loaded models and their input/output shapes.
+    """
+    return {
+        name: {
+            "input_shape":  str(m.input_shape),
+            "output_shape": str(m.output_shape),
+        }
+        for name, m in models.items()
+    }
 
 
 @app.get("/")
 def root():
-    response = {
-        'greeting': 'Hello'
-    }
-    return response
+    return {"status": "ok", "models_loaded": list(models.keys())}
