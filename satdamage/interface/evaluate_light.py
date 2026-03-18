@@ -4,7 +4,16 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-from satdamage.params import *
+from google.cloud import storage
+from satdamage.params import (
+    MODEL_TARGET,
+    MODEL_ARCHITECTURE,
+    MODEL_FILENAME,
+    DATA_DIR,
+    CROPS_DIR,
+    BUCKET_NAME,
+    MAX_WORKERS
+)
 from satdamage.ml_logic.registry import load_model_light
 from satdamage.ml_logic.model import evaluate_light
 from satdamage.ml_logic.preprocessor import (
