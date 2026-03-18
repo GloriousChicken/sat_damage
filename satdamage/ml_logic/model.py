@@ -7,6 +7,7 @@ Input:   paires d'images pré/post-catastrophe (6 canaux)
 
 import numpy as np
 import os
+import json
 from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers, metrics, backend, ops, optimizers, losses
@@ -631,3 +632,69 @@ def evaluate(model, test_ds, threshold=None):
         print(f"Threshold utilisé    : {threshold}")
 
         return y_pred, y_prob
+
+def evaluate_light(model, test_ds, threshold=None):
+    """
+    Évalue le modèle et affiche la matrice de confusion + F1.
+    Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
+    avant d'afficher le rapport final.
+    """
+    if MODEL_MODE == "multiclass":
+        y_true, y_prob_all = [], []
+        for images, labels in test_ds:
+            probs = model.predict(images, verbose=0)   # shape (batch, 4)
+            y_prob_all.extend(probs)
+            y_true.extend(labels.numpy())
+
+        y_prob_all = np.array(y_prob_all)
+        y_pred     = np.argmax(y_prob_all, axis=1)
+        y_true     = np.array(y_true)
+        if y_true.ndim > 1:
+            y_true = np.argmax(y_true, axis=1)
+        y_true = y_true.astype(int)
+
+        print(f"\n── Rapport de classification {model.name} ──")
+        class_report = classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0)
+        print(json.dumps(class_report, indent=2))
+
+        cm = confusion_matrix(y_true, y_pred)
+        print("── Matrice de confusion ──")
+        print(cm)
+        f1_macro    = f1_score(y_true, y_pred, average="macro",    zero_division=0)
+        f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        print(f"F1 macro    : {f1_macro:.4f}   ← indicateur principal (classes déséquilibrées)")
+        print(f"F1 weighted : {f1_weighted:.4f}")
+
+        eval_metrics = {
+            "y_true":       y_true,
+            "y_pred":       y_pred,
+            "y_prob":       y_prob_all,
+            "f1_macro":     f1_macro,
+            "f1_weighted":  f1_weighted,
+        }
+
+        return eval_metrics, class_report
+
+    else:
+        y_true, y_prob = [], []
+        for images, labels in test_ds:
+            preds = model.predict(images, verbose=0)
+            y_prob.extend(preds.flatten())
+            y_true.extend(labels.numpy())
+
+        y_pred = (np.array(y_prob) >= threshold).astype(int)
+        y_true = np.array(y_true).astype(int)
+
+        print(f"\n── Rapport de classification {model.name} ──")
+        class_report = classification_report(y_true, y_pred, target_names=["no-damage", "damaged"])
+        print(json.dumps(class_report, indent=2))
+
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        print("── Matrice de confusion ──")
+        print(f"  TN={tn:>5}  FP={fp:>5}")
+        print(f"  FN={fn:>5}  TP={tp:>5}")
+        print(f"\nF1-score  (damaged) : {f1_score(y_true, y_pred):.4f}")
+        print(f"Threshold utilisé    : {threshold}")
+
+        return y_pred, y_prob, class_report

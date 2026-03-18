@@ -152,6 +152,93 @@ def load_model(model_name: str) -> keras.Model:
 
     return None
 
+
+def load_model_light(model_name: str) -> keras.Model:
+    """
+    Return a saved model:
+    - locally
+    - or from GCS if MODEL_TARGET=='gcs'
+    Return None (but do not Raise) if no model is found
+    """
+    if MODEL_TARGET == "local":
+        print(Fore.BLUE + f"\nLoad latest model from local registry..." + Style.RESET_ALL)
+
+        # Get the latest model version name by the timestamp on disk
+        local_model_directory = LOCAL_REGISTRY_PATH
+        local_model_paths = glob.glob(f"{local_model_directory}/{model_name}")
+
+        if not local_model_paths:
+            return None
+
+        most_recent_model_path_on_disk = sorted(local_model_paths)[-1]
+
+        deb = time.time()
+        print(Fore.BLUE + f"\nLoad latest model from disk..." + Style.RESET_ALL)
+        latest_model = keras.models.load_model(most_recent_model_path_on_disk)
+        fin = time.time()
+        print(f"✅ Model loaded from local disk in {fin - deb:.2f} seconds.")
+
+        return latest_model
+
+    elif MODEL_TARGET == "gcs":
+        print(Fore.BLUE + f"\nLoad model from GCS..." + Style.RESET_ALL)
+
+        client = storage.Client()
+        blobs = [
+            blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
+            if model_name in blob.name
+        ]
+        if not blobs:
+            print(f"\n❌ No model found in GCS bucket {BUCKET_NAME} with name {model_name}")
+            return None
+        if len(blobs) > 1:
+            print(f"\n⚠️ Multiple models found in GCS bucket {BUCKET_NAME} with name {model_name}.")
+            return None
+
+        try:
+            deb = time.time()
+            blob = blobs[0]
+            print(f"Model found in GCS bucket {BUCKET_NAME} with name {model_name} is: {blob.name} (updated on {blob.updated})")
+            # Télécharger en mémoire sans toucher le disque
+            buffer = BytesIO()
+            blob.download_to_file(buffer)
+            buffer.seek(0)
+
+            with tempfile.NamedTemporaryFile(suffix=".keras", delete=False) as tmp:
+                tmp.write(buffer.read())
+                tmp_path = tmp.name
+
+            try:
+                with zipfile.ZipFile(tmp_path, 'r') as z:
+                    with z.open('config.json') as f:
+                        config = json.load(f)
+
+                config_str = json.dumps(config)
+                needs_binary_f1 = "BinaryF1Score" in config_str
+                custom_objects = {"BinaryF1Score": BinaryF1Score()} if needs_binary_f1 else {}
+                latest_model = keras.models.load_model(
+                    tmp_path,
+                    custom_objects=custom_objects
+                    )
+                fin = time.time()
+                print(f"Model {latest_model.name} loaded from GCS bucket {BUCKET_NAME} in {fin - deb:.2f} seconds.")
+
+            except Exception as e:
+                print(f"Error while loading model : {type(e).__name__}: {e}")
+                return None
+            finally:
+                os.remove(tmp_path)
+
+            print("\n✅ Model downloaded from cloud storage")
+            return latest_model
+
+        except:
+            print(f"\n❌ {model_name} model not found in GCS bucket {BUCKET_NAME}")
+            return None
+
+    return None
+
+
 def save_model(model: keras.Model = None) -> None:
     """
     Persist trained model locally on the hard drive at f"{LOCAL_REGISTRY_PATH}/models/{timestamp}.h5"
