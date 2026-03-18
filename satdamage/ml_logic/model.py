@@ -654,9 +654,15 @@ def evaluate_light(model, test_ds, threshold=None):
         y_true = y_true.astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
-        class_report = classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0)
-        # print(json.dumps(class_report, indent=2))
-        print(class_report)
+        class_report = classification_report(
+            y_true,
+            y_pred,
+            target_names=CLASS_NAMES,
+            digits=4,
+            zero_division=0,
+            output_dictbool=True
+        )
+        print(json.dumps(class_report, indent=2))
 
         cm = confusion_matrix(y_true, y_pred)
         print("── Matrice de confusion ──")
@@ -687,7 +693,12 @@ def evaluate_light(model, test_ds, threshold=None):
         y_true = np.array(y_true).astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
-        class_report = classification_report(y_true, y_pred, target_names=["no-damage", "damaged"])
+        class_report = classification_report(
+            y_true,
+            y_pred,
+            target_names=["no-damage", "damaged"],
+            output_dictbool=True
+        )
         print(json.dumps(class_report, indent=2))
 
         cm = confusion_matrix(y_true, y_pred)
