@@ -32,9 +32,7 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
     Full pipeline:
         1. Scan image pairs
         2. Extract all crops to disk (idempotent — skips if already done)
-        3. Stratified split of saved crops into train/val/test
-        4. Compute class weights from disk
-        5. Build lazy tf.data.Dataset
+        3. Build lazy tf.data.Dataset
     """
     print("=" * 55)
     print("  SatDamage — xView2 Dataset Builder (Lazy)")
@@ -64,27 +62,9 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # # ── 3. Stratified split on saved crops to preserve label distribution
-    # print("\n[3/5] Split stratifie des crops sauvegardes...")
-    # start_time = time.time()
-    # split_crops_dir_stratified(
-    #     source_dir=str(Path(crops_dir) / "all"),
-    #     out_dir=crops_dir,
-    # )
-    # end_time = time.time()
-    # print(f"Temps : {end_time - start_time:.2f} secondes")
-
-    # # ── 4. Class weights — passed to model.fit() to compensate for imbalance
-    # print("\n[4/5] Distribution des classes (class_weight)...")
-    # class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
-    # print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
-    # print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
-
-    # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
+    # ── 3. Build lazy tf.data.Datasets (never loads all images into memory)
     print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
     start_time = time.time()
-    # train_ds = build_dataset_from_dir(str(Path(crops_dir) / "train"), training=True)
-    # val_ds   = build_dataset_from_dir(str(Path(crops_dir) / "val"),   training=False)
     test_dataset  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
