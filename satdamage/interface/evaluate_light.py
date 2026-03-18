@@ -79,6 +79,9 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # ── 0. Cleaning crops
+    start_time = time.time()
+
     if DATA_DIR is None:
         raise ValueError("DATA_DIR environment variable must be set.")
 
@@ -90,6 +93,9 @@ if __name__ == "__main__":
                 tf.io.gfile.rmtree(str(item))
             else:
                 item.unlink()
+
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 1. Build datasets
     test_ds = build_xview2_datasets_light(
