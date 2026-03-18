@@ -112,6 +112,7 @@ def load_model(model_name: str) -> keras.Model:
 
         try:
             latest_blob = max(blobs, key=lambda x: x.updated)
+            print(f"Latest model found in GCS bucket {BUCKET_NAME} with name {model_name} is: {latest_blob.name} (updated on {latest_blob.updated})")
             # Télécharger en mémoire sans toucher le disque
             buffer = BytesIO()
             latest_blob.download_to_file(buffer)
