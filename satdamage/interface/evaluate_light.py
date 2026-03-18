@@ -63,7 +63,7 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 3. Build lazy tf.data.Datasets (never loads all images into memory)
-    print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
+    print("\n[3/5] Construction des tf.data.Dataset (lazy)...")
     start_time = time.time()
     test_dataset  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
     end_time = time.time()
@@ -98,14 +98,20 @@ if __name__ == "__main__":
     )
 
     # ── 2. Load model
+    start_time = time.time()
     model = load_model_light(model_name=MODEL_FILENAME)
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 3. Evaluate
+    start_time = time.time()
     metrics_light, metrics = evaluate_light(model, test_ds)
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
+    start_time = time.time()
     client = storage.Client()
     bucket = client.bucket(BUCKET_NAME)
-
     # Save metrics in the cloud
     if metrics is not None:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -118,10 +124,12 @@ if __name__ == "__main__":
         print("✅ Results saved to GCS")
     else:
         print("⚠️ No metrics to save")
-
-    print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # explicit cleanup to avoid AtomicFunction __del__ noise at interpreter shutdown
     del model, test_ds
     tf.keras.backend.clear_session()
     gc.collect()
+
+    print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
