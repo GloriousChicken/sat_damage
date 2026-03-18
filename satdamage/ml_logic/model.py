@@ -641,7 +641,9 @@ def evaluate_light(model, test_ds, threshold=None):
     """
     if MODEL_MODE == "multiclass":
         y_true, y_prob_all = [], []
-        for images, labels in test_ds:
+        for i, (images, labels) in enumerate(test_ds):
+            if i % 10 == 0:
+                print(f"  Évaluation batch {i+1}/{len(test_ds)}...")
             probs = model.predict(images, verbose=0)   # shape (batch, 4)
             y_prob_all.extend(probs)
             y_true.extend(labels.numpy())
@@ -660,7 +662,7 @@ def evaluate_light(model, test_ds, threshold=None):
             target_names=CLASS_NAMES,
             digits=4,
             zero_division=0,
-            output_dictbool=True
+            output_dict=True
         )
         print(json.dumps(class_report, indent=2))
 
@@ -697,7 +699,7 @@ def evaluate_light(model, test_ds, threshold=None):
             y_true,
             y_pred,
             target_names=["no-damage", "damaged"],
-            output_dictbool=True
+            output_dict=True
         )
         print(json.dumps(class_report, indent=2))
 
