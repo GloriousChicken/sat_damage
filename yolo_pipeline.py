@@ -55,8 +55,8 @@ from typing import List, Dict, Optional, Union
 class PipelineConfig:
     # ── Modèles fine-tunés sur xView2
     # Remplacer par les chemins réels après l'entraînement
-    SEG_WEIGHTS  = "runs/segment/train/weights/best.pt"
-    CLS_WEIGHTS  = "runs/classify/train/weights/best.pt"
+    SEG_WEIGHTS  = "yolo26n-seg.pt" # "runs/segment/train/weights/best.pt"
+    CLS_WEIGHTS  = "yolo26n-cls.pt" # "runs/classify/train/weights/best.pt"
 
     # ── Seuils YOLO26-seg
     SEG_CONF     = 0.25     # Confiance minimale pour valider une détection
@@ -79,7 +79,7 @@ class PipelineConfig:
     }
 
     # ── Device
-    DEVICE       = "cuda:0"     # "cpu" ou "cuda:0"
+    DEVICE       = "cpu"     # "cpu" ou "cuda:0"
 
     # ── Batch size pour la classification (traitement en lot des crops)
     CLS_BATCH    = 32
@@ -499,12 +499,7 @@ if __name__ == "__main__":
     import sys
 
     # ── Initialiser le pipeline
-    pipeline = YOLO26Pipeline(
-        seg_weights = "runs/segment/train/weights/best.pt",
-        cls_weights = "runs/classify/train/weights/best.pt",
-        device      = "cuda:0",
-        verbose     = True,
-    )
+    pipeline = YOLO26Pipeline()
 
     # ── Inférence sur une image post-disaster
     image_path = sys.argv[1] if len(sys.argv) > 1 else "test_post.png"
