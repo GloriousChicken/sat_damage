@@ -45,7 +45,24 @@ import sys
 import numpy as np
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-from typing import List, Dict, Optional, Union
+
+import shutil
+import tempfile, os
+import json
+from collections import defaultdict
+from shapely import wkt as shapely_wkt
+from shapely.geometry import shape as shapely_shape
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    f1_score,
+)
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from typing import List, Dict, Optional, Union, Tuple
 from yolo_data_preparation import find_post_disaster_images, stratified_event_split
 
 # ═══════════════════════════════════════════════════════════
@@ -251,8 +268,6 @@ class YOLO26Pipeline:
         if not detections:
             return detections
 
-        import tempfile, os
-
         # ── Sauvegarder les crops en fichiers temporaires pour YOLO-cls
         # YOLO26-cls attend des chemins ou des arrays PIL/numpy
         tmp_dir   = tempfile.mkdtemp(prefix="yolo_cls_")
@@ -294,7 +309,6 @@ class YOLO26Pipeline:
             }
 
         # ── Nettoyer les fichiers temporaires
-        import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
         return detections
@@ -446,7 +460,6 @@ class YOLO26Pipeline:
         self._print_evaluation_summary(seg_metrics, cls_metrics, pipeline_stats)
 
         # ── Sauvegarde JSON
-        import json as json_module
         summary = {
             "segmentation":  seg_metrics,
             "classification": {
@@ -457,7 +470,7 @@ class YOLO26Pipeline:
         }
         json_path = Path(output_dir) / "evaluation_summary.json"
         with open(json_path, "w") as f:
-            json_module.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2)
         print(f"\n[Evaluate] Résumé sauvegardé → {json_path}")
 
         # Réinjecter la matrice pour le retour Python
@@ -651,8 +664,6 @@ class YOLO26Pipeline:
         Charge les bâtiments ground truth depuis un JSON post-disaster.
         Retourne uniquement ceux avec un label valide (pas "un-classified").
         """
-        from shapely import wkt as shapely_wkt
-        from shapely.geometry import shape as shapely_shape
 
         with open(json_path, "r") as f:
             data = json.load(f)
