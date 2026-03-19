@@ -1,0 +1,8 @@
+_BASE_: "base.yaml"
+
+MODEL:
+  TYPE: 'disasteradaptivenet'
+
+DATASET:
+  SPLIT: 'xview2'
+  INCLUDE_CONDITIONING_INFORMATION: True

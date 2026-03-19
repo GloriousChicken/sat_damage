@@ -1,0 +1,7 @@
+_BASE_: "base.yaml"
+
+MODEL:
+  TYPE: 'disasteradaptivenet'
+
+DATASET:
+  INCLUDE_CONDITIONING_INFORMATION: True
