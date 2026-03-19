@@ -40,7 +40,7 @@ DROPOUT_RATE  = 0.5
 FOCAL_GAMMA   = 1.5   # was 0.0; re-enable focal — class_weight experiment failed
 
 # Model selection
-MODEL_NAMES = ["cnn_concat", "cnn_dual", "efficientnet"]
+MODEL_NAMES = ["cnn_concat", "efficientnet"] #"cnn_dual"
 MODEL_ARCHITECTURE = "efficientnet"  # Options: "cnn_concat", "cnn_dual", "efficientnet"
 MODEL_FILENAME = os.environ.get("MODEL_FILENAME")
 MODEL_MODE = "multiclass" # multiclass or binary
