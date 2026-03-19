@@ -642,31 +642,31 @@ def evaluate_light(model, test_ds, threshold=None):
     Optimized: model.predict() is called once on the entire dataset for efficiency,
     avoiding per-batch loop overhead. GPU pipeline kept saturated via prefetch.
     """
-    def _predict_and_collect_labels(dataset):
-        """Shared fast path used by both multiclass and binary evaluation."""
-        ds_opt = dataset.prefetch(tf.data.AUTOTUNE)
-        steps = tf.data.experimental.cardinality(dataset).numpy()
+    if MODEL_MODE == "multiclass":
+        # Optimize dataset pipeline: prefetch for GPU saturation
+        test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
+
+        # Calculate steps to avoid dataset introspection overhead
+        steps = tf.data.experimental.cardinality(test_ds).numpy()
         steps = None if steps < 0 else steps  # -1 means unknown cardinality
 
-        y_pred_raw = model.predict(ds_opt, verbose=1, steps=steps)
+        # Single efficient prediction pass (silent, no verbose overhead)
+        y_prob_all = model.predict(test_ds_opt, verbose=1, steps=steps)  # shape (total_samples, 4)
+
+        # Collect labels in a separate pass
         y_true_list = []
-        for _, labels in dataset:
+        for _, labels in test_ds:
             y_true_list.append(labels.numpy())
-        y_true_raw = np.concatenate(y_true_list)
-        return y_pred_raw, y_true_raw
+        y_true = np.concatenate(y_true_list)
 
-    y_pred_raw, y_true_raw = _predict_and_collect_labels(test_ds)
-
-    if MODEL_MODE == "multiclass":
-        y_prob_all = y_pred_raw
-        y_pred = np.argmax(y_prob_all, axis=1)
-        y_true = y_true_raw
+        y_pred     = np.argmax(y_prob_all, axis=1)
         if y_true.ndim > 1:
             y_true = np.argmax(y_true, axis=1)
         y_true = y_true.astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
         class_report = classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0)
+        # print(json.dumps(class_report, indent=2))
         print(class_report)
 
         cm = confusion_matrix(y_true, y_pred)
@@ -684,15 +684,32 @@ def evaluate_light(model, test_ds, threshold=None):
             "f1_macro":     f1_macro,
             "f1_weighted":  f1_weighted,
         }
+
         return eval_metrics, class_report
 
     else:
-        y_prob = y_pred_raw.flatten()
-        y_true = y_true_raw.astype(int)
+        # Optimize dataset pipeline: prefetch for GPU saturation
+        test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
+
+        # Calculate steps to avoid dataset introspection overhead
+        steps = tf.data.experimental.cardinality(test_ds).numpy()
+        steps = None if steps < 0 else steps  # -1 means unknown cardinality
+
+        # Single efficient prediction pass on entire dataset
+        y_prob_raw = model.predict(test_ds_opt, verbose=1, steps=steps)  # shape (total_samples, 1)
+        y_prob = y_prob_raw.flatten()
+
+        # Collect labels in a separate pass
+        y_true_list = []
+        for _, labels in test_ds:
+            y_true_list.append(labels.numpy())
+        y_true = np.concatenate(y_true_list).astype(int)
+
         y_pred = (y_prob >= threshold).astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
         class_report = classification_report(y_true, y_pred, target_names=["no-damage", "damaged"])
+        # print(json.dumps(class_report, indent=2))
         print(class_report)
 
         cm = confusion_matrix(y_true, y_pred)
@@ -710,4 +727,5 @@ def evaluate_light(model, test_ds, threshold=None):
             "y_prob":       y_prob,
             "f1_macro":     f1
         }
+
         return eval_metrics, class_report
