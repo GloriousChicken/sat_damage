@@ -175,11 +175,13 @@ def crop_building(
 def _save_pair_crops(args):
     """
     Worker function: processes one image pair and saves crops as PNGs.
-    Returns list of (png_path, label) tuples.
+    Returns list of (png_path, label) tuples and class counts.
+    Pre-created label directories are passed to avoid mkdir overhead per building.
     """
-    pre_path, post_path, label_path, out_dir, pair_idx = args
+    pre_path, post_path, label_path, out_dir, pair_idx, label_dirs = args
     results = []
     errors  = 0
+    class_counts = {}  # Track class distribution in this worker
 
     try:
         pre_img  = _load_image(pre_path)
@@ -203,18 +205,19 @@ def _save_pair_crops(args):
             # Stack pre+post horizontally into a single 128x256 PNG
             combined = np.concatenate([pre_crop, post_crop], axis=1)  # (128, 256, 3)
 
-            label_dir = Path(out_dir) / str(label)
-            label_dir.mkdir(parents=True, exist_ok=True)
-
+            # Use pre-created directory (passed in) instead of mkdir to avoid overhead
+            label_dir = label_dirs[label]
             fname = f"{pair_idx:06d}_{b_idx:04d}.png"
             fpath = label_dir / fname
-            Image.fromarray(combined).save(fpath)
+            # Faster PNG save: optimize=False skips heavy compression
+            Image.fromarray(combined).save(fpath, optimize=False)
             results.append((str(fpath), label))
+            class_counts[label] = class_counts.get(label, 0) + 1
 
     except Exception as e:
         errors = 1
 
-    return results, errors
+    return results, errors, class_counts
 
 
 # ─────────────────────────────────────────────
@@ -386,12 +389,18 @@ def extract_crops_to_disk(
     pairs:       List[Dict],
     out_dir:     str,
     split_name:  str,
-    max_workers: int = 8,
+    max_workers: int = 48,
     verbose:     bool = True,
 ) -> Tuple[int, int]:
     """
-    Saves building crops as PNGs to out_dir/split_name/{0,1}/.
+    Saves building crops as PNGs to out_dir/split_name/{0,1}/ using parallel workers.
     Idempotent — skips if crops already exist.
+
+    Optimizations:
+        - Pre-creates all label directories upfront instead of per-building (major speedup)
+        - Uses 48 workers (I/O-bound task)
+        - Tracks class counts in workers to avoid redundant final glob scan
+        - PNG compression disabled for faster I/O (optimize=False)
     """
     split_dir = Path(out_dir) / split_name
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -401,33 +410,46 @@ def extract_crops_to_disk(
         print(f"[INFO] {split_name}: {len(existing)} crops already on disk, skipping extraction.")
         return len(existing), 0
 
+    # Pre-create all label directories upfront (avoids repeated mkdir overhead per building)
+    label_values = list(range(NUM_CLASSES)) if MODEL_MODE == "multiclass" else [0, 1]
+    label_dirs = {}
+    for label in label_values:
+        label_dir = split_dir / str(label)
+        label_dir.mkdir(parents=True, exist_ok=True)
+        label_dirs[label] = label_dir
+
     args_list = [
-        (p["pre_img"], p["post_img"], p["post_label"], str(split_dir), idx)
+        (p["pre_img"], p["post_img"], p["post_label"], str(split_dir), idx, label_dirs)
         for idx, p in enumerate(pairs)
     ]
 
     total_crops  = 0
     total_errors = 0
     completed    = 0
+    class_counts_total = {}
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_save_pair_crops, args): args for args in args_list}
 
         for future in as_completed(futures):
-            results, errors = future.result()
+            results, errors, class_counts = future.result()
             total_crops  += len(results)
             total_errors += errors
             completed    += 1
 
+            # Accumulate class counts from worker
+            for label, count in class_counts.items():
+                class_counts_total[label] = class_counts_total.get(label, 0) + count
+
             if verbose and completed % 10 == 0:
                 print(f"  [{split_name}] {completed}/{len(pairs)} pairs processed — {total_crops} crops saved")
 
-    n_list = []
-    for i in range(NUM_CLASSES if MODEL_MODE == "multiclass" else 2):
-        n_list.append(len(list((split_dir/str(i)).glob("*.png"))) if (split_dir/str(i)).exists() else 0)
-    class_summary = " - ".join(f"Class {cls}: {i}" for cls, i in enumerate(n_list))
+    # Use collected counts instead of redundant glob scan
+    class_summary = " - ".join(f"Class {cls}: {class_counts_total.get(cls, 0)}"
+                               for cls in sorted(class_counts_total.keys()))
     print(f"[{split_name}] Done: {total_crops} crops - {class_summary} - Errors: {total_errors}")
 
+    print(f"== Number of batches : {total_crops//BATCH_SIZE} ==")
     return total_crops, total_errors
 
 

@@ -7,6 +7,7 @@ Input:   paires d'images pré/post-catastrophe (6 canaux)
 
 import numpy as np
 import os
+import json
 from datetime import datetime
 import tensorflow as tf
 from tensorflow.keras import layers, Model, regularizers, metrics, backend, ops, optimizers, losses
@@ -631,3 +632,100 @@ def evaluate(model, test_ds, threshold=None):
         print(f"Threshold utilisé    : {threshold}")
 
         return y_pred, y_prob
+
+def evaluate_light(model, test_ds, threshold=None):
+    """
+    Évalue le modèle et affiche la matrice de confusion + F1.
+    Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
+    avant d'afficher le rapport final.
+
+    Optimized: model.predict() is called once on the entire dataset for efficiency,
+    avoiding per-batch loop overhead. GPU pipeline kept saturated via prefetch.
+    """
+    if MODEL_MODE == "multiclass":
+        # Optimize dataset pipeline: prefetch for GPU saturation
+        test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
+
+        # Calculate steps to avoid dataset introspection overhead
+        # cardinality = int(tf.data.experimental.cardinality(test_ds_opt).numpy())
+        # steps = cardinality if cardinality >= 0 else None
+
+        # Single efficient prediction pass (silent, no verbose overhead)
+        y_prob_all = model.predict(test_ds_opt, verbose=1, steps=None)  # shape (total_samples, 4)
+
+        # Collect labels in a separate pass
+        y_true_list = []
+        for _, labels in test_ds:
+            y_true_list.append(labels.numpy())
+        y_true = np.concatenate(y_true_list)
+
+        y_pred     = np.argmax(y_prob_all, axis=1)
+        if y_true.ndim > 1:
+            y_true = np.argmax(y_true, axis=1)
+        y_true = y_true.astype(int)
+
+        print(f"\n── Rapport de classification {model.name} ──")
+        class_report = classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0)
+        # print(json.dumps(class_report, indent=2))
+        print(class_report)
+
+        cm = confusion_matrix(y_true, y_pred)
+        print("── Matrice de confusion ──")
+        print(cm)
+        f1_macro    = f1_score(y_true, y_pred, average="macro",    zero_division=0)
+        f1_weighted = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        print(f"F1 macro    : {f1_macro:.4f}   ← indicateur principal (classes déséquilibrées)")
+        print(f"F1 weighted : {f1_weighted:.4f}")
+
+        eval_metrics = {
+            "y_true":       y_true,
+            "y_pred":       y_pred,
+            "y_prob":       y_prob_all,
+            "f1_macro":     f1_macro,
+            "f1_weighted":  f1_weighted,
+        }
+
+        return eval_metrics, class_report
+
+    else:
+        # Optimize dataset pipeline: prefetch for GPU saturation
+        test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
+
+        # Calculate steps to avoid dataset introspection overhead
+        cardinality = int(tf.data.experimental.cardinality(test_ds_opt).numpy())
+        steps = cardinality if cardinality >= 0 else None
+
+        # Single efficient prediction pass on entire dataset
+        y_prob_raw = model.predict(test_ds_opt, verbose=1, steps=steps)  # shape (total_samples, 1)
+        y_prob = y_prob_raw.flatten()
+
+        # Collect labels in a separate pass
+        y_true_list = []
+        for _, labels in test_ds:
+            y_true_list.append(labels.numpy())
+        y_true = np.concatenate(y_true_list).astype(int)
+
+        y_pred = (y_prob >= threshold).astype(int)
+
+        print(f"\n── Rapport de classification {model.name} ──")
+        class_report = classification_report(y_true, y_pred, target_names=["no-damage", "damaged"])
+        # print(json.dumps(class_report, indent=2))
+        print(class_report)
+
+        cm = confusion_matrix(y_true, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        print("── Matrice de confusion ──")
+        print(f"  TN={tn:>5}  FP={fp:>5}")
+        print(f"  FN={fn:>5}  TP={tp:>5}")
+        f1 = f1_score(y_true, y_pred)
+        print(f"\nF1-score  (damaged) : {f1:.4f}")
+        print(f"Threshold utilisé    : {threshold}")
+
+        eval_metrics = {
+            "y_true":       y_true,
+            "y_pred":       y_pred,
+            "y_prob":       y_prob,
+            "f1_macro":     f1
+        }
+
+        return eval_metrics, class_report
