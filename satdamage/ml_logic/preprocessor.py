@@ -401,7 +401,6 @@ def extract_crops_to_disk(
         - Uses 48 workers (I/O-bound task)
         - Tracks class counts in workers to avoid redundant final glob scan
         - PNG compression disabled for faster I/O (optimize=False)
-        - Verbose output only every 100 pairs to reduce subprocess overhead
     """
     split_dir = Path(out_dir) / split_name
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -450,6 +449,7 @@ def extract_crops_to_disk(
                                for cls in sorted(class_counts_total.keys()))
     print(f"[{split_name}] Done: {total_crops} crops - {class_summary} - Errors: {total_errors}")
 
+    print(f"== Number of batches : {total_crops//BATCH_SIZE} ==")
     return total_crops, total_errors
 
 
