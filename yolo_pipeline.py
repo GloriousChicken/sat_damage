@@ -111,7 +111,7 @@ from sklearn.metrics import (
     ConfusionMatrixDisplay,
     f1_score,
 )
-
+from yolo_data_preparation import find_post_disaster_images, stratified_event_split
 
 # ═══════════════════════════════════════════════════════════
 # 1. CONFIGURATION
@@ -172,7 +172,7 @@ class YOLO26Pipeline:
         self,
         det_weights: str  = PipelineConfig.DET_WEIGHTS,
         device:      str  = PipelineConfig.DEVICE,
-        verbose:     bool = False,
+        verbose:     bool = True,
     ):
         """
         Charge le modèle YOLO26n de détection.
@@ -307,7 +307,7 @@ class YOLO26Pipeline:
     def evaluate(
         self,
         test_records:  List[Dict],
-        data_yaml:     str  = "yolo26_dataset/detection/dataset.yaml",
+        data_yaml:     str  = "yolo_dataset/detection/dataset.yaml",
         output_dir:    str  = "evaluation_results",
         save_plots:    bool = True,
         verbose:       bool = True,
@@ -924,32 +924,19 @@ class YOLO26Pipeline:
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    from yolo26_data_preparation import (
-        find_post_disaster_images, stratified_event_split
-    )
 
     # ── Charger le pipeline (un seul modèle)
-    pipeline = YOLO26Pipeline(
-        det_weights = "runs/detect/train/weights/best.pt",
-        device      = "cuda:0",
-        verbose     = True,
-    )
+    pipeline = YOLO26Pipeline()
 
     # ── Récupérer le test set
-    all_records          = find_post_disaster_images("xview2/")
+    all_records          = find_post_disaster_images()
     _, _, test_records   = stratified_event_split(all_records)
 
     # ── Évaluation complète
-    results = pipeline.evaluate(
-        test_records = test_records,
-        data_yaml    = "yolo26_dataset/detection/dataset.yaml",
-        output_dir   = "evaluation_results/",
-        save_plots   = True,
-        verbose      = True,
-    )
+    results = pipeline.evaluate(test_records)
 
     # ── Inférence et visualisation sur une image exemple
-    img_path   = test_records[0]["post_img"]
+    img_path   = "test_post.png" # test_records[0]["post_img"]
     detections = pipeline.predict(img_path)
-    pipeline.draw_results(img_path, detections, save_path="example_output.png")
+    pipeline.draw_results(img_path, detections, save_path="pipeline_output.png")
     print(pipeline.summarize(detections))
