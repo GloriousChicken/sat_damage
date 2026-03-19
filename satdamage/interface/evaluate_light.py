@@ -1,12 +1,20 @@
 import time
+import json
 import gc
 from pathlib import Path
 import numpy as np
 import tensorflow as tf
-import json
 from google.cloud import storage
 
-from satdamage.params import *
+from satdamage.params import (
+    MODEL_TARGET,
+    MODEL_ARCHITECTURE,
+    MODEL_FILENAME,
+    DATA_DIR,
+    CROPS_DIR,
+    BUCKET_NAME,
+    MAX_WORKERS
+)
 from satdamage.ml_logic.registry import load_model_light
 from satdamage.ml_logic.model import evaluate_light
 from satdamage.ml_logic.preprocessor import (
@@ -25,9 +33,7 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
     Full pipeline:
         1. Scan image pairs
         2. Extract all crops to disk (idempotent — skips if already done)
-        3. Stratified split of saved crops into train/val/test
-        4. Compute class weights from disk
-        5. Build lazy tf.data.Dataset
+        3. Build lazy tf.data.Dataset
     """
     print("=" * 55)
     print("  SatDamage — xView2 Dataset Builder (Lazy)")
@@ -57,27 +63,9 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
 
-    # # ── 3. Stratified split on saved crops to preserve label distribution
-    # print("\n[3/5] Split stratifie des crops sauvegardes...")
-    # start_time = time.time()
-    # split_crops_dir_stratified(
-    #     source_dir=str(Path(crops_dir) / "all"),
-    #     out_dir=crops_dir,
-    # )
-    # end_time = time.time()
-    # print(f"Temps : {end_time - start_time:.2f} secondes")
-
-    # # ── 4. Class weights — passed to model.fit() to compensate for imbalance
-    # print("\n[4/5] Distribution des classes (class_weight)...")
-    # class_weights = compute_class_weights_from_dir(str(Path(crops_dir) / "train"))
-    # print(f"  class_weight[0] (undamaged) = {class_weights[0]:.3f}")
-    # print(f"  class_weight[1] (damaged)   = {class_weights[1]:.3f}")
-
-    # ── 5. Build lazy tf.data.Datasets (never loads all images into memory)
-    print("\n[5/5] Construction des tf.data.Dataset (lazy)...")
+    # ── 3. Build lazy tf.data.Datasets (never loads all images into memory)
+    print("\n[3/5] Construction des tf.data.Dataset (lazy)...")
     start_time = time.time()
-    # train_ds = build_dataset_from_dir(str(Path(crops_dir) / "train"), training=True)
-    # val_ds   = build_dataset_from_dir(str(Path(crops_dir) / "val"),   training=False)
     test_dataset  = build_dataset_from_dir(str(Path(crops_dir) / "test"),  training=False)
     end_time = time.time()
     print(f"Temps : {end_time - start_time:.2f} secondes")
@@ -92,6 +80,9 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # ── 0. Cleaning crops
+    start_time = time.time()
+
     if DATA_DIR is None:
         raise ValueError("DATA_DIR environment variable must be set.")
     model_filename = MODEL_FILENAME
@@ -107,6 +98,9 @@ if __name__ == "__main__":
             else:
                 item.unlink()
 
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
+
     # ── 1. Build datasets
     test_ds = build_xview2_datasets_light(
         xview2_root=DATA_DIR,
@@ -114,12 +108,19 @@ if __name__ == "__main__":
     )
 
     # ── 2. Load model
+    start_time = time.time()
     model = load_model_light(model_name=model_filename)
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # ── 3. Evaluate
+    start_time = time.time()
     metrics_light, metrics = evaluate_light(model, test_ds)
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # Save metrics in the cloud, fallback to local file if upload is not allowed
+    start_time = time.time()
     if metrics is not None:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         model_name_stem = Path(model_filename).stem
@@ -146,10 +147,12 @@ if __name__ == "__main__":
             print(f"✅ Results saved locally to {local_metrics_path}")
     else:
         print("⚠️ No metrics to save")
-
-    print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
+    end_time = time.time()
+    print(f"Temps : {end_time - start_time:.2f} secondes")
 
     # explicit cleanup to avoid AtomicFunction __del__ noise at interpreter shutdown
     del model, test_ds
     tf.keras.backend.clear_session()
     gc.collect()
+
+    print(f"\n{'='*31}\n****    GREAT SUCCESS !    ****\n{'='*31}\n")
