@@ -86,6 +86,12 @@ class PipelineConfig:
 
     # ── Classes de dommages (doivent correspondre à l'entraînement cls)
     CLASS_NAMES  = ["no-damage", "minor-damage", "major-damage", "destroyed"]
+    DAMAGE_TO_LABEL = {
+        "no-damage":     0,
+        "minor-damage":  1,
+        "major-damage":  2,
+        "destroyed":     3
+    }
 
     # ── Couleurs de visualisation par classe
     CLASS_COLORS = {
@@ -98,8 +104,8 @@ class PipelineConfig:
     # ── Device
     DEVICE       = "cuda:0"     # "cpu" ou "cuda:0"
 
-    # ── Batch size pour la classification (traitement en lot des crops)
-    CLS_BATCH    = 32
+    # Distance max (pixels) pour le matching détection ↔ ground truth
+    MAX_MATCH_DIST = 60
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1120,20 +1126,8 @@ if __name__ == "__main__":
         verbose        = True,
     )
 
-
-
-
-
-
-
-
-
-
-
-
     # ── Inférence sur une image post-disaster
     image_path = sys.argv[1] if len(sys.argv) > 1 else "test_post.png"
-
     detections = pipeline.predict(image_path)
 
     # ── Résumé
