@@ -638,24 +638,36 @@ def evaluate_light(model, test_ds, threshold=None):
     Évalue le modèle et affiche la matrice de confusion + F1.
     Si threshold=None, recherche automatiquement le seuil optimal sur test_ds
     avant d'afficher le rapport final.
-    """
-    if MODEL_MODE == "multiclass":
-        y_true, y_prob_all = [], []
-        for images, labels in test_ds:
-            probs = model.predict(images, verbose=0)   # shape (batch, 4)
-            y_prob_all.extend(probs)
-            y_true.extend(labels.numpy())
 
-        y_prob_all = np.array(y_prob_all)
-        y_pred     = np.argmax(y_prob_all, axis=1)
-        y_true     = np.array(y_true)
+    Optimized: model.predict() is called once on the entire dataset for efficiency,
+    avoiding per-batch loop overhead. GPU pipeline kept saturated via prefetch.
+    """
+    def _predict_and_collect_labels(dataset):
+        """Shared fast path used by both multiclass and binary evaluation."""
+        ds_opt = dataset.prefetch(tf.data.AUTOTUNE)
+        steps = tf.data.experimental.cardinality(dataset).numpy()
+        steps = None if steps < 0 else steps  # -1 means unknown cardinality
+
+        y_pred_raw = model.predict(ds_opt, verbose=1, steps=steps)
+        y_true_list = []
+        for _, labels in dataset:
+            y_true_list.append(labels.numpy())
+        y_true_raw = np.concatenate(y_true_list)
+        return y_pred_raw, y_true_raw
+
+    y_pred_raw, y_true_raw = _predict_and_collect_labels(test_ds)
+
+    if MODEL_MODE == "multiclass":
+        y_prob_all = y_pred_raw
+        y_pred = np.argmax(y_prob_all, axis=1)
+        y_true = y_true_raw
         if y_true.ndim > 1:
             y_true = np.argmax(y_true, axis=1)
         y_true = y_true.astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
         class_report = classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4, zero_division=0)
-        print(json.dumps(class_report, indent=2))
+        print(class_report)
 
         cm = confusion_matrix(y_true, y_pred)
         print("── Matrice de confusion ──")
@@ -672,29 +684,30 @@ def evaluate_light(model, test_ds, threshold=None):
             "f1_macro":     f1_macro,
             "f1_weighted":  f1_weighted,
         }
-
         return eval_metrics, class_report
 
     else:
-        y_true, y_prob = [], []
-        for images, labels in test_ds:
-            preds = model.predict(images, verbose=0)
-            y_prob.extend(preds.flatten())
-            y_true.extend(labels.numpy())
-
-        y_pred = (np.array(y_prob) >= threshold).astype(int)
-        y_true = np.array(y_true).astype(int)
+        y_prob = y_pred_raw.flatten()
+        y_true = y_true_raw.astype(int)
+        y_pred = (y_prob >= threshold).astype(int)
 
         print(f"\n── Rapport de classification {model.name} ──")
         class_report = classification_report(y_true, y_pred, target_names=["no-damage", "damaged"])
-        print(json.dumps(class_report, indent=2))
+        print(class_report)
 
         cm = confusion_matrix(y_true, y_pred)
         tn, fp, fn, tp = cm.ravel()
         print("── Matrice de confusion ──")
         print(f"  TN={tn:>5}  FP={fp:>5}")
         print(f"  FN={fn:>5}  TP={tp:>5}")
-        print(f"\nF1-score  (damaged) : {f1_score(y_true, y_pred):.4f}")
+        f1 = f1_score(y_true, y_pred)
+        print(f"\nF1-score  (damaged) : {f1:.4f}")
         print(f"Threshold utilisé    : {threshold}")
 
-        return y_pred, y_prob, class_report
+        eval_metrics = {
+            "y_true":       y_true,
+            "y_pred":       y_pred,
+            "y_prob":       y_prob,
+            "f1_macro":     f1
+        }
+        return eval_metrics, class_report

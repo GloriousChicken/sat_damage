@@ -3,6 +3,8 @@ import gc
 from pathlib import Path
 import numpy as np
 import tensorflow as tf
+import json
+from google.cloud import storage
 
 from satdamage.params import *
 from satdamage.ml_logic.registry import load_model_light
@@ -92,6 +94,9 @@ def build_xview2_datasets_light(xview2_root: str, crops_dir: str):
 if __name__ == "__main__":
     if DATA_DIR is None:
         raise ValueError("DATA_DIR environment variable must be set.")
+    model_filename = MODEL_FILENAME
+    if model_filename is None:
+        raise ValueError("MODEL_FILENAME environment variable must be set.")
 
     # If CROPS_DIR is not empty, delete it to ensure a clean slate (idempotent — won't fail if it doesn't exist)
     if CROPS_DIR and Path(CROPS_DIR).exists():
@@ -109,24 +114,36 @@ if __name__ == "__main__":
     )
 
     # ── 2. Load model
-    model = load_model_light(model_name=MODEL_FILENAME)
+    model = load_model_light(model_name=model_filename)
 
     # ── 3. Evaluate
     metrics_light, metrics = evaluate_light(model, test_ds)
 
-    client = storage.Client()
-    bucket = client.bucket(BUCKET_NAME)
-
-    # Save metrics in the cloud
+    # Save metrics in the cloud, fallback to local file if upload is not allowed
     if metrics is not None:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        metrics_filename = f"run_{MODEL_ARCHITECTURE}_{timestamp}.json"
-        blob = bucket.blob(f"metrics/{metrics_filename}")
-        blob.upload_from_string(
-            data=json.dumps(metrics),
-            content_type="application/json"
-        )
-        print("✅ Results saved to GCS")
+        model_name_stem = Path(model_filename).stem
+        # metrics_filename: use MODEL_FILENAME without extension to avoid issues with GCS object naming
+        metrics_filename = f"eval_{model_name_stem}_{timestamp}.json"
+
+        try:
+            client = storage.Client()
+            bucket = client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"metrics/{metrics_filename}")
+            blob.upload_from_string(
+                data=json.dumps(metrics),
+                content_type="application/json"
+            )
+            print("✅ Results saved to GCS")
+        except Exception as e:
+            local_metrics_dir = Path("metrics")
+            local_metrics_dir.mkdir(parents=True, exist_ok=True)
+            local_metrics_path = local_metrics_dir / metrics_filename
+            with open(local_metrics_path, "w", encoding="utf-8") as f:
+                # json.dump(metrics, f, ensure_ascii=False, indent=2)
+                print(metrics, file=f)
+            print(f"⚠️ GCS upload failed ({type(e).__name__}: {e}).")
+            print(f"✅ Results saved locally to {local_metrics_path}")
     else:
         print("⚠️ No metrics to save")
 
