@@ -38,6 +38,8 @@ LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-4
 DROPOUT_RATE  = 0.5
 FOCAL_GAMMA   = 1.5   # was 0.0; re-enable focal — class_weight experiment failed
+ORDINAL_LOSS_WEIGHT = 0.4  # weight of ordinal consistency term when MODEL_MODE == "multiclass"
+USE_ORDINAL_FOCAL = True   # switch between ordinal+focal (True) and focal-only (False) for multiclass
 
 # Model selection
 MODEL_NAMES = ["cnn_concat", "cnn_dual", "efficientnet"]

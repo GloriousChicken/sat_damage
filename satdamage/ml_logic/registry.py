@@ -3,7 +3,6 @@ import os
 import time
 import json
 import tempfile
-import zipfile
 
 from io import BytesIO
 from colorama import Fore, Style
@@ -12,6 +11,13 @@ from google.cloud import storage
 
 from satdamage.params import *
 from satdamage.ml_logic.model import BinaryF1Score
+from satdamage.ml_logic.model import OrdinalFocalLoss
+
+
+CUSTOM_OBJECTS = {
+    "BinaryF1Score": BinaryF1Score,
+    "OrdinalFocalLoss": OrdinalFocalLoss,
+}
 
 def save_results(params: dict, metrics: dict) -> None:
     """
@@ -91,7 +97,10 @@ def load_model(model_name: str) -> keras.Model:
 
         deb = time.time()
         print(Fore.BLUE + f"\nLoad latest model from disk..." + Style.RESET_ALL)
-        latest_model = keras.models.load_model(most_recent_model_path_on_disk)
+        latest_model = keras.models.load_model(
+            most_recent_model_path_on_disk,
+            custom_objects=CUSTOM_OBJECTS,
+        )
         fin = time.time()
         print(f"✅ Model loaded from local disk in {fin - deb:.2f} seconds.")
 
@@ -123,16 +132,9 @@ def load_model(model_name: str) -> keras.Model:
                 tmp_path = tmp.name
 
             try:
-                with zipfile.ZipFile(tmp_path, 'r') as z:
-                    with z.open('config.json') as f:
-                        config = json.load(f)
-
-                config_str = json.dumps(config)
-                needs_binary_f1 = "BinaryF1Score" in config_str
-                custom_objects = {"BinaryF1Score": BinaryF1Score()} if needs_binary_f1 else {}
                 latest_model = keras.models.load_model(
                     tmp_path,
-                    custom_objects=custom_objects
+                    custom_objects=CUSTOM_OBJECTS
                     )
                 fin = time.time()
                 print(f"Model {latest_model.name} loaded from GCS bucket {BUCKET_NAME} in {fin - deb:.2f} seconds.")
@@ -174,7 +176,10 @@ def load_model_light(model_name: str) -> keras.Model:
 
         deb = time.time()
         print(Fore.BLUE + f"\nLoad model from disk..." + Style.RESET_ALL)
-        latest_model = keras.models.load_model(most_recent_model_path_on_disk)
+        latest_model = keras.models.load_model(
+            most_recent_model_path_on_disk,
+            custom_objects=CUSTOM_OBJECTS,
+        )
         # model = keras.models.load_model(model_name)
         fin = time.time()
         print(f"✅ Model loaded from local disk in {fin - deb:.2f} seconds.")
@@ -210,16 +215,9 @@ def load_model_light(model_name: str) -> keras.Model:
                 tmp_path = tmp.name
 
             try:
-                with zipfile.ZipFile(tmp_path, 'r') as z:
-                    with z.open('config.json') as f:
-                        config = json.load(f)
-
-                config_str = json.dumps(config)
-                needs_binary_f1 = "BinaryF1Score" in config_str
-                custom_objects = {"BinaryF1Score": BinaryF1Score()} if needs_binary_f1 else {}
                 latest_model = keras.models.load_model(
                     tmp_path,
-                    custom_objects=custom_objects
+                    custom_objects=CUSTOM_OBJECTS
                     )
                 fin = time.time()
                 print(f"Model {latest_model.name} loaded from GCS bucket {BUCKET_NAME} in {fin - deb:.2f} seconds.")

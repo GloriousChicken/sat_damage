@@ -39,6 +39,42 @@ class BinaryF1Score(metrics.Metric):
         self.recall.reset_state()
 
 
+@tf.keras.utils.register_keras_serializable(package="satdamage")
+class OrdinalFocalLoss(losses.Loss):
+    """Categorical focal loss + ordinal consistency penalty on class CDFs."""
+    def __init__(self, gamma=1.5, ordinal_weight=0.4, from_logits=False, name="ordinal_focal_loss"):
+        super().__init__(name=name)
+        self.gamma = gamma
+        self.ordinal_weight = ordinal_weight
+        self.from_logits = from_logits
+        self.focal = losses.CategoricalFocalCrossentropy(
+            gamma=gamma,
+            from_logits=from_logits,
+            reduction=losses.Reduction.NONE,
+        )
+
+    def call(self, y_true, y_pred):
+        y_true = tf.cast(y_true, y_pred.dtype)
+        focal_per_sample = self.focal(y_true, y_pred)
+
+        y_prob = tf.nn.softmax(y_pred, axis=-1) if self.from_logits else y_pred
+        y_prob = tf.clip_by_value(y_prob, backend.epsilon(), 1.0 - backend.epsilon())
+
+        cdf_true = tf.cumsum(y_true, axis=-1)
+        cdf_pred = tf.cumsum(y_prob, axis=-1)
+        ordinal_per_sample = tf.reduce_mean(tf.square(cdf_pred - cdf_true), axis=-1)
+
+        return focal_per_sample + self.ordinal_weight * ordinal_per_sample
+
+    def get_config(self):
+        return {
+            "gamma": self.gamma,
+            "ordinal_weight": self.ordinal_weight,
+            "from_logits": self.from_logits,
+            "name": self.name,
+        }
+
+
 # ─────────────────────────────────────────────
 # 1. ARCHITECTURE EfficientNetV2B0
 # ─────────────────────────────────────────────
@@ -446,9 +482,21 @@ def compile_model(model: Model, learning_rate: float) -> Model:
             )
             for i in range(1, NUM_CLASSES)
         ]
+        # Select loss function based on USE_ORDINAL_FOCAL toggle
+        if USE_ORDINAL_FOCAL:
+            loss_fn = OrdinalFocalLoss(
+                gamma=FOCAL_GAMMA,
+                ordinal_weight=ORDINAL_LOSS_WEIGHT,
+                from_logits=False,
+            )
+        else:
+            loss_fn = losses.CategoricalFocalCrossentropy(
+                gamma=FOCAL_GAMMA,
+                from_logits=False,
+            )
         model.compile(
             optimizer = opt,
-            loss      = losses.CategoricalFocalCrossentropy(gamma=FOCAL_GAMMA, from_logits=False),
+            loss      = loss_fn,
             metrics   = [
                 metrics.CategoricalAccuracy(name="accuracy"),
                 metrics.F1Score(name="f1", average="macro"),
