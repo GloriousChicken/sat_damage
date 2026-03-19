@@ -173,8 +173,9 @@ def load_model_light(model_name: str) -> keras.Model:
         most_recent_model_path_on_disk = sorted(local_model_paths)[-1]
 
         deb = time.time()
-        print(Fore.BLUE + f"\nLoad latest model from disk..." + Style.RESET_ALL)
+        print(Fore.BLUE + f"\nLoad model from disk..." + Style.RESET_ALL)
         latest_model = keras.models.load_model(most_recent_model_path_on_disk)
+        # model = keras.models.load_model(model_name)
         fin = time.time()
         print(f"✅ Model loaded from local disk in {fin - deb:.2f} seconds.")
 
@@ -185,7 +186,7 @@ def load_model_light(model_name: str) -> keras.Model:
 
         client = storage.Client()
         blobs = [
-            blob for blob in client.get_bucket(BUCKET_NAME).list_blobs(prefix="models")
+            blob for blob in client.bucket(BUCKET_NAME).list_blobs(prefix="models")
             if model_name in blob.name
         ]
         if not blobs:
