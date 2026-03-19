@@ -125,15 +125,16 @@ if __name__ == "__main__":
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         model_name_stem = Path(model_filename).stem
         # metrics_filename: use MODEL_FILENAME without extension to avoid issues with GCS object naming
-        metrics_filename = f"eval_{model_name_stem}_{timestamp}.json"
+        metrics_filename = f"eval_{model_name_stem}_{timestamp}.txt"
 
         try:
             client = storage.Client()
             bucket = client.bucket(BUCKET_NAME)
             blob = bucket.blob(f"metrics/{metrics_filename}")
             blob.upload_from_string(
-                data=json.dumps(metrics),
-                content_type="application/json"
+                # data=json.dumps(metrics),
+                data=metrics,
+                content_type="text/plain"
             )
             print("✅ Results saved to GCS")
         except Exception as e:

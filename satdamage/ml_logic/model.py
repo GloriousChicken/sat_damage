@@ -647,11 +647,11 @@ def evaluate_light(model, test_ds, threshold=None):
         test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
 
         # Calculate steps to avoid dataset introspection overhead
-        steps = tf.data.experimental.cardinality(test_ds).numpy()
-        steps = None if steps < 0 else steps  # -1 means unknown cardinality
+        # cardinality = int(tf.data.experimental.cardinality(test_ds_opt).numpy())
+        # steps = cardinality if cardinality >= 0 else None
 
         # Single efficient prediction pass (silent, no verbose overhead)
-        y_prob_all = model.predict(test_ds_opt, verbose=1, steps=steps)  # shape (total_samples, 4)
+        y_prob_all = model.predict(test_ds_opt, verbose=1, steps=None)  # shape (total_samples, 4)
 
         # Collect labels in a separate pass
         y_true_list = []
@@ -692,8 +692,8 @@ def evaluate_light(model, test_ds, threshold=None):
         test_ds_opt = test_ds.prefetch(tf.data.AUTOTUNE)
 
         # Calculate steps to avoid dataset introspection overhead
-        steps = tf.data.experimental.cardinality(test_ds).numpy()
-        steps = None if steps < 0 else steps  # -1 means unknown cardinality
+        cardinality = int(tf.data.experimental.cardinality(test_ds_opt).numpy())
+        steps = cardinality if cardinality >= 0 else None
 
         # Single efficient prediction pass on entire dataset
         y_prob_raw = model.predict(test_ds_opt, verbose=1, steps=steps)  # shape (total_samples, 1)
