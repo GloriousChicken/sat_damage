@@ -929,8 +929,7 @@ if __name__ == "__main__":
     pipeline = YOLO26Pipeline()
 
     # ── Récupérer le test set
-    all_records          = find_post_disaster_images()
-    _, _, test_records   = stratified_event_split(all_records)
+    test_records          = find_post_disaster_images(source_splits=["test"])
 
     # ── Évaluation complète
     results = pipeline.evaluate(test_records)
