@@ -4,6 +4,12 @@ A deep learning system for classifying building damage severity from satellite i
 
 Built on the [xView2 (xBD)](https://xview2.org/) dataset, covering hurricanes, earthquakes, volcanoes, tsunamis, and wildfires.
 
+## Demo
+
+Experience the model in action on our interactive web interface:
+**[SatDamage Live Demo](https://satdamage-demo.streamlit.app/)**
+
+
 ## How It Works
 
 For each annotated building, the pipeline:
